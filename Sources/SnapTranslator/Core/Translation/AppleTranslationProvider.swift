@@ -72,8 +72,16 @@ struct TranslationAnchorView: View {
                         try await session.prepareTranslation()
                         request.continuation.resume(returning: "")
                     } else {
-                        let response = try await session.translate(request.text)
-                        request.continuation.resume(returning: response.targetText)
+                        // 尝试直接翻译；若因语言包未就绪失败，先准备语言包再重试一次
+                        do {
+                            let response = try await session.translate(request.text)
+                            request.continuation.resume(returning: response.targetText)
+                        } catch {
+                            // 语言包可能未下载或初始化失败，先准备再重试
+                            try await session.prepareTranslation()
+                            let response = try await session.translate(request.text)
+                            request.continuation.resume(returning: response.targetText)
+                        }
                     }
                 } catch {
                     request.continuation.resume(throwing: error)

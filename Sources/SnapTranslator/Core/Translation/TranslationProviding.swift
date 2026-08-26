@@ -23,7 +23,7 @@ enum PrimaryEngine: String, CaseIterable, Codable, Identifiable {
         case .auto: return "自动（离线优先）"
         case .offline: return "仅离线（纯本地，永不联网）"
         case .apple: return "Apple 系统翻译（离线）"
-        case .openai: return "OpenAI 兼容接口"
+        case .openai: return "智谱 AI GLM5.2"
         case .deepl: return "DeepL"
         case .google: return "Google（免费）"
         }
@@ -39,7 +39,8 @@ enum TranslationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .allFailed(let errors):
-            return "全部引擎失败：" + errors.joined(separator: "；")
+            let detail = errors.joined(separator: "；")
+            return "全部引擎失败：\(detail)\n\n建议：\n1. 在设置 → 引擎中点「下载 Apple 翻译语言包」确保本地离线翻译可用\n2. 在设置 → 引擎中填入智谱 AI API Key 使用 GLM5.2 在线翻译"
         case .timeout:
             return "请求超时"
         case .emptyResponse:

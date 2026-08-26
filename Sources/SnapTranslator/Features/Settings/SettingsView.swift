@@ -75,10 +75,10 @@ struct SettingsView: View {
                     Text(engine.displayName).tag(engine)
                 }
             }
-            Section("OpenAI 兼容接口") {
-                TextField("Base URL（GLM 默认 https://open.bigmodel.cn/api/paas/v4）", text: $settings.openaiBaseURL)
+            Section("智谱 AI GLM5.2") {
+                TextField("Base URL（默认 https://open.bigmodel.cn/api/paas/v4）", text: $settings.openaiBaseURL)
                 TextField("模型（默认 glm-5.2）", text: $settings.openaiModel)
-                SecureField("API Key", text: $settings.openaiAPIKey)
+                SecureField("API Key（open.bigmodel.cn 获取）", text: $settings.openaiAPIKey)
             }
             Section("DeepL") {
                 SecureField("API Key（Free 档以 :fx 结尾）", text: $settings.deeplAPIKey)
@@ -87,7 +87,7 @@ struct SettingsView: View {
                 Button("下载 Apple 翻译语言包") {
                     onPrepareAppleLanguages()
                 }
-                Text("Apple 系统翻译完全离线，需 macOS 15+。首次使用前点按上方按钮下载语言包。「仅离线」模式只使用本地 Apple 翻译，永不联网；其余模式在 Apple 不可用或失败时会自动降级到云引擎（Google/OpenAI/DeepL，需联网）。Google 免费接口无需任何配置。")
+                Text("Apple 系统翻译完全离线，需 macOS 15+。翻译时若语言包未就绪会自动触发准备。「仅离线」模式只使用本地 Apple 翻译，永不联网；其余模式在 Apple 不可用或失败时会自动降级到云引擎（智谱 AI/Google/DeepL，需联网）。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }

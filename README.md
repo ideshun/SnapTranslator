@@ -24,7 +24,7 @@
 | 顺序 | 引擎 | 配置 |
 |------|------|------|
 | 1 | **GLM-5.2（OpenAI 兼容，默认）** | Base URL `https://open.bigmodel.cn/api/paas/v4`，模型 `glm-5.2`；在设置中填智谱 API Key（存 Keychain） |
-| 2 | Apple 系统翻译（完全离线，macOS 15+） | 首次使用前在设置中点「下载 Apple 翻译语言包」 |
+| 2 | Apple 系统翻译（完全离线，macOS 15+） | 首次使用前在设置中点「下载 Apple 翻译语言包」，翻译时若语言包未就绪会自动触发准备 |
 | 3 | Google 免费接口 | 零配置 |
 | 4 | DeepL | 设置中填 API Key（Free 档以 `:fx` 结尾） |
 
@@ -75,7 +75,7 @@ Sources/SnapTranslator/
 │   ├── Hotkey/     # Carbon 快捷键 + 录制控件
 │   ├── Capture/    # 框选遮罩 + 屏幕截图 + 坐标转换
 │   ├── OCR/        # Vision OCR + 语种检测
-│   ├── Translation/# 引擎协议 + Apple/OpenAI 兼容/DeepL/Google + 调度降级
+│   ├── Translation/# 引擎协议 + Apple/GLM5.2/DeepL/Google + 调度降级
 │   └── WordBook/   # 生词模型 + JSON 存储 + CSV 导出
 ├── Features/
 │   ├── ResultPanel/# NSPanel 置顶面板（对照视图、失焦透明）
