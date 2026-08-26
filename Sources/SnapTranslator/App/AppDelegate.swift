@@ -54,10 +54,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            let image = NSImage(
+            // 优先使用 SF Symbol 模板图（自动适配菜单栏深浅色）
+            var image = NSImage(
                 systemSymbolName: "character.bubble",
                 accessibilityDescription: "SnapTranslator"
             )
+            // 回退：SF Symbol 加载失败时，用打包进 bundle 的 App 图标
+            if image == nil {
+                image = NSImage(named: NSImage.applicationIconName)
+            }
             image?.isTemplate = true
             button.image = image
             button.toolTip = "SnapTranslator"

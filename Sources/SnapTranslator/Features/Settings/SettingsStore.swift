@@ -72,7 +72,7 @@ final class SettingsStore: ObservableObject {
         alwaysOnTop = defaults.object(forKey: "st.alwaysOnTop") as? Bool ?? true
         unfocusedOpacity = defaults.object(forKey: "st.unfocusedOpacity") as? Double ?? 0.3
         launchAtLogin = defaults.bool(forKey: "st.launchAtLogin")
-        showInDock = defaults.object(forKey: "st.showInDock") as? Bool ?? false
+        showInDock = defaults.object(forKey: "st.showInDock") as? Bool ?? true
         hotkeyCapture = Self.loadHotkey("st.hotkey.capture")
             ?? HotkeySpec(keyCode: 1, modifiers: HotkeySpec.optionModifier) // ⌥S
         hotkeyRecapture = Self.loadHotkey("st.hotkey.recapture")
