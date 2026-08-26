@@ -16,8 +16,9 @@ final class TranslationAnchor: ObservableObject {
 
     @Published var request: Request?
 
+    /// 使用 identifier 构造 Locale.Language，兼容所有 BCP 47 格式（含 zh-Hans 等复合码）
     private static func localeLanguage(_ language: Language) -> Locale.Language {
-        Locale.Language(languageCode: Locale.LanguageCode(language.rawValue))
+        Locale.Language(identifier: language.rawValue)
     }
 
     /// 翻译文本（source 传 nil 自动检测）
@@ -78,15 +79,18 @@ struct TranslationAnchorView: View {
                     request.continuation.resume(throwing: error)
                 }
             }
-            .onChange(of: anchor.request?.id) { _, _ in
+            .onChange(of: anchor.request?.id) { _, newID in
+                guard let newID else { return }
                 guard let request = anchor.request else { return }
                 // 先置 nil 再设值：相同语言对时 Configuration 相等，
                 // SwiftUI 不会重触发 translationTask，需要强制两段变更
                 config = nil
                 DispatchQueue.main.async {
+                    // 确保 request 仍是本次触发的，避免旧请求覆盖新请求
+                    guard anchor.request?.id == newID, let req = anchor.request else { return }
                     config = TranslationSession.Configuration(
-                        source: request.source,
-                        target: request.target
+                        source: req.source,
+                        target: req.target
                     )
                 }
             }

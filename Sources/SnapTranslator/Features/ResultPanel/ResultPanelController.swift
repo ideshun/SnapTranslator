@@ -11,6 +11,7 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
     var onCollect: ((String, String) -> Void)?
     var onRetry: (() -> Void)?
     var onSwapLanguages: (() -> Void)?
+    var onOpenWordBook: (() -> Void)?
 
     private let settings: SettingsStore
     private var panel: NSPanel?
@@ -74,6 +75,9 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
                 },
                 onSwapLanguages: { [weak self] in
                     self?.onSwapLanguages?()
+                },
+                onOpenWordBook: { [weak self] in
+                    self?.onOpenWordBook?()
                 }
             )
         )

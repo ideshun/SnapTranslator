@@ -12,6 +12,7 @@ struct ResultPanelView: View {
     let onClose: () -> Void
     let onTogglePin: () -> Void
     let onSwapLanguages: () -> Void
+    let onOpenWordBook: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,6 +63,12 @@ struct ResultPanelView: View {
                 }
                 .help("收藏整句到生词本")
             }
+
+            // 生词本按钮：始终可见，方便随时查看收藏
+            Button(action: onOpenWordBook) {
+                Image(systemName: "books.vertical")
+            }
+            .help("打开生词本")
 
             Button {
                 let text = model.translatedText.isEmpty ? model.sourceText : model.translatedText
