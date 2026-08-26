@@ -41,6 +41,18 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Toggle("登录时自动启动", isOn: $settings.launchAtLogin)
+
+            // 识别历史设置
+            HStack {
+                Picker("保存最近识别次数", selection: $settings.historyLimit) {
+                    Text("不保存").tag(0)
+                    Text("5 次").tag(5)
+                    Text("10 次").tag(10)
+                    Text("20 次").tag(20)
+                    Text("50 次").tag(50)
+                }
+                .frame(width: 200)
+            }
         }
         .formStyle(.grouped)
         .padding(1)
@@ -88,9 +100,9 @@ struct SettingsView: View {
                     Button("下载 Apple 翻译语言包") {
                         onPrepareAppleLanguages()
                     }
-                    .help("系统会弹出确认框，下载源语言和目标语言对应的离线翻译语言包")
+                    .help("调起系统设置 → 通用 → 翻译 界面，手动下载离线翻译语言包")
                 }
-                Text("Apple 系统翻译完全离线，需 macOS 15+。翻译时若语言包未就绪会自动触发准备。「仅离线」模式只使用本地 Apple 翻译，永不联网；其余模式在 Apple 不可用或失败时会自动降级到云引擎（智谱 AI/Google/DeepL，需联网）。")
+                Text("Apple 系统翻译完全离线，需 macOS 15+。点击按钮会打开系统「翻译」语言设置界面，在系统设置中下载所需语言包。翻译时若语言包未就绪会自动触发准备。「仅离线」模式只使用本地 Apple 翻译，永不联网；其余模式在 Apple 不可用或失败时会自动降级到云引擎（智谱 AI/Google/DeepL，需联网）。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }

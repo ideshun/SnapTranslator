@@ -150,6 +150,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wordBookItem.target = self
         fileMenu.addItem(wordBookItem)
 
+        let historyItem = NSMenuItem(
+            title: "识别历史",
+            action: #selector(showHistory),
+            keyEquivalent: "h"
+        )
+        historyItem.target = self
+        fileMenu.addItem(historyItem)
+
         // 窗口菜单
         let windowMenuItem = NSMenuItem()
         mainMenu.addItem(windowMenuItem)
@@ -180,8 +188,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 菜单栏
 
     private func setupStatusItem() {
-        // 使用固定长度确保图标始终可见
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // 使用可变长度确保图标在所有场景下都能显示
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
             // 依次尝试多个 SF Symbol，最后用程序化绘制兜底
             let symbols = [
@@ -189,6 +197,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 "character.bubble",
                 "translate",
                 "text.bubble",
+                "globe",
+                "doc.text.magnifyingglass",
             ]
             var image: NSImage?
             for symbol in symbols {
@@ -202,8 +212,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 image = Self.makeFallbackIcon()
             }
             image?.isTemplate = true
+            // 设置合适的尺寸确保图标在菜单栏中清晰可见
+            image?.size = NSSize(width: 18, height: 18)
             button.image = image
+            button.imagePosition = .imageOnly
             button.toolTip = "SnapTranslator"
+            // 确保按钮能正确接收点击
+            button.isEnabled = true
         }
         statusItem = item
         item.menu = buildMenu()
@@ -214,24 +229,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size)
         image.lockFocus()
-        // 画一个圆角气泡 + 两条文字线
+        // 画一个圆角气泡 + 两条文字线（template 模式由系统自动适配颜色）
         NSColor.labelColor.set()
-        let bubble = NSBezierPath(roundedRect: NSRect(x: 1, y: 1, width: 16, height: 13), xRadius: 3, yRadius: 3)
+        let bubble = NSBezierPath(roundedRect: NSRect(x: 2, y: 2, width: 14, height: 12), xRadius: 3, yRadius: 3)
         bubble.fill()
         // 气泡尾巴
         let tail = NSBezierPath()
-        tail.move(to: NSPoint(x: 5, y: 14))
-        tail.line(to: NSPoint(x: 3, y: 17))
-        tail.line(to: NSPoint(x: 9, y: 14))
+        tail.move(to: NSPoint(x: 6, y: 14))
+        tail.line(to: NSPoint(x: 4, y: 17))
+        tail.line(to: NSPoint(x: 10, y: 14))
         tail.close()
         tail.fill()
-        // 文字线条
-        NSColor.windowBackgroundColor.set()
-        let line1 = NSRect(x: 4, y: 9, width: 10, height: 1.5)
-        let line2 = NSRect(x: 4, y: 6, width: 7, height: 1.5)
-        NSBezierPath(rect: line1).fill()
-        NSBezierPath(rect: line2).fill()
         image.unlockFocus()
+        image.isTemplate = true
         return image
     }
 
@@ -281,6 +291,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(dockItem)
 
         menu.addItem(.separator())
+
+        let historyItem = NSMenuItem(
+            title: "识别历史",
+            action: #selector(showHistory),
+            keyEquivalent: ""
+        )
+        historyItem.target = self
+        menu.addItem(historyItem)
 
         let wordBookItem = NSMenuItem(
             title: "生词本",
@@ -333,6 +351,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         panelController.applyPin(alwaysOnTop: settings.alwaysOnTop)
         statusItem?.menu = buildMenu()
+
+        // 按历史设置限制历史条数
+        trimHistory()
+    }
+
+    /// 根据设置修剪历史记录
+    private func trimHistory() {
+        let limit = settings.historyLimit
+        if limit > 0 && panelController.model.history.count > limit {
+            panelController.model.history = Array(panelController.model.history.prefix(limit))
+        }
     }
 
     private func wirePanelActions() {
@@ -407,6 +436,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func togglePanel() {
         panelController.toggle()
+    }
+
+    @objc private func showHistory() {
+        let model = panelController.model
+        // 显示面板并切到历史查看
+        if !panelController.isVisible {
+            panelController.show(near: nil)
+        }
+        if !model.history.isEmpty {
+            model.phase = .idle  // 让历史在 idle 态显示
+        }
     }
 
     @objc private func openWordBook() {
@@ -540,6 +580,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     to: target
                 )
                 model.finished(translation: translation, provider: provider, source: source)
+                self?.trimHistory()
             } catch {
                 model.failed("翻译失败：\(error.localizedDescription)")
             }
@@ -568,30 +609,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 触发 Apple 翻译语言包下载（使用专用锚点窗口，不干扰结果面板）
+    /// 触发 Apple 翻译语言包下载：调起系统设置翻译界面
     private func prepareAppleLanguages() {
-        let source = settings.sourceHint
-        let target = settings.targetLanguage
-        // 源语言为 nil（自动检测）时使用英文作为显式源语言，确保语言包能正确下载
-        let effectiveSource = source ?? .en
-        Task {
-            do {
-                try await translationHost.prepareLanguages(source: effectiveSource, target: target)
-                // 准备完成后提示用户
-                let alert = NSAlert()
-                alert.messageText = "Apple 翻译语言包已就绪"
-                alert.informativeText = "目标语言：\(target.displayName)\n源语言：\(effectiveSource.displayName)\n\n现在可以离线翻译了。"
-                alert.addButton(withTitle: "好的")
-                alert.runModal()
-            } catch {
-                let alert = NSAlert()
-                alert.messageText = "语言包准备失败"
-                alert.informativeText = error.localizedDescription
-                alert.addButton(withTitle: "知道了")
-                alert.runModal()
+        // 尝试多种系统设置 URL 以兼容不同 macOS 版本
+        let urls = [
+            URL(string: "x-apple.systempreferences:com.apple.Translation-Settings.extension"),
+            URL(string: "x-apple.systempreferences:com.apple.preference.general?Translation"),
+            URL(string: "x-apple.systempreferences:com.apple.preference.general"),
+        ]
+        var opened = false
+        for url in urls {
+            if let url {
+                opened = NSWorkspace.shared.open(url)
+                if opened { break }
             }
-            translationHost.hide()
         }
+
+        if !opened {
+            let alert = NSAlert()
+            alert.messageText = "无法打开系统翻译设置"
+            alert.informativeText = "请手动前往 系统设置 → 通用 → 翻译 下载所需语言包。"
+            alert.addButton(withTitle: "好的")
+            alert.runModal()
+        }
+        translationHost.hide()
     }
 
     // MARK: - 提示
