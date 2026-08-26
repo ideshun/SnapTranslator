@@ -67,6 +67,21 @@ final class SettingsStore: ObservableObject {
     }
 
     init() {
+        // 一次性迁移到 GLM-5.2：老用户若仍是旧默认 auto/旧 OpenAI 地址/旧模型，升级后自动切到 GLM
+        if !defaults.bool(forKey: "st.migrated.glm52") {
+            defaults.set(true, forKey: "st.migrated.glm52")
+            if defaults.string(forKey: "st.engine.primary") == nil
+                || defaults.string(forKey: "st.engine.primary") == PrimaryEngine.auto.rawValue {
+                defaults.set(PrimaryEngine.openai.rawValue, forKey: "st.engine.primary")
+            }
+            if defaults.string(forKey: "st.openai.baseURL") == nil
+                || defaults.string(forKey: "st.openai.baseURL") == "https://api.openai.com/v1" {
+                defaults.set("https://open.bigmodel.cn/api/paas/v4", forKey: "st.openai.baseURL")
+            }
+            if defaults.string(forKey: "st.openai.model") == "gpt-4o-mini" {
+                defaults.set("glm-5.2", forKey: "st.openai.model")
+            }
+        }
         targetLanguage = Language(rawValue: defaults.string(forKey: "st.targetLanguage") ?? "") ?? .zhHans
         sourceHint = defaults.string(forKey: "st.sourceHint").flatMap(Language.init(rawValue:))
         alwaysOnTop = defaults.object(forKey: "st.alwaysOnTop") as? Bool ?? true
@@ -79,9 +94,9 @@ final class SettingsStore: ObservableObject {
             ?? HotkeySpec(keyCode: 1, modifiers: HotkeySpec.optionShiftModifier) // ⌥⇧S
         hotkeyTogglePanel = Self.loadHotkey("st.hotkey.toggle")
             ?? HotkeySpec(keyCode: 17, modifiers: HotkeySpec.optionModifier) // ⌥T
-        primaryEngine = PrimaryEngine(rawValue: defaults.string(forKey: "st.engine.primary") ?? "") ?? .auto
-        openaiBaseURL = defaults.string(forKey: "st.openai.baseURL") ?? "https://api.openai.com/v1"
-        openaiModel = defaults.string(forKey: "st.openai.model") ?? "gpt-4o-mini"
+        primaryEngine = PrimaryEngine(rawValue: defaults.string(forKey: "st.engine.primary") ?? "") ?? .openai
+        openaiBaseURL = defaults.string(forKey: "st.openai.baseURL") ?? "https://open.bigmodel.cn/api/paas/v4"
+        openaiModel = defaults.string(forKey: "st.openai.model") ?? "glm-5.2"
         openaiAPIKey = KeychainStore.get("st.openai.key") ?? ""
         deeplAPIKey = KeychainStore.get("st.deepl.key") ?? ""
     }

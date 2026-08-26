@@ -76,8 +76,8 @@ struct SettingsView: View {
                 }
             }
             Section("OpenAI 兼容接口") {
-                TextField("Base URL（如 https://api.openai.com/v1）", text: $settings.openaiBaseURL)
-                TextField("模型", text: $settings.openaiModel)
+                TextField("Base URL（GLM 默认 https://open.bigmodel.cn/api/paas/v4）", text: $settings.openaiBaseURL)
+                TextField("模型（默认 glm-5.2）", text: $settings.openaiModel)
                 SecureField("API Key", text: $settings.openaiAPIKey)
             }
             Section("DeepL") {

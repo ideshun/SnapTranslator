@@ -13,7 +13,7 @@ struct OpenAICompatProvider: TranslationProviding {
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/$", with: "", options: .regularExpression)
         let normalized = trimmed.hasSuffix("/chat/completions") ? trimmed : trimmed + "/chat/completions"
-        self.baseURL = URL(string: normalized) ?? URL(string: "https://api.openai.com/v1/chat/completions")!
+        self.baseURL = URL(string: normalized) ?? URL(string: "https://open.bigmodel.cn/api/paas/v4/chat/completions")!
         self.model = model
         self.apiKey = apiKey
     }
