@@ -21,6 +21,12 @@ struct TranslationService {
     /// 翻译并返回（译文, 引擎名），全部引擎失败时抛错
     func translate(_ text: String, from source: Language?, to target: Language) async throws -> (String, String) {
         var failures: [String] = []
+
+        // 仅离线模式下 Apple 翻译不可用（系统 < macOS 15）时，直接给出明确错误，绝不联网
+        if config.primary == .offline && !supportsOfflineApple {
+            throw TranslationError.noOfflineEngine
+        }
+
         for provider in providers {
             guard provider.isAvailable else { continue }
             do {
@@ -38,6 +44,14 @@ struct TranslationService {
             }
         }
         throw TranslationError.allFailed(failures)
+    }
+
+    /// 当前系统是否具备 Apple 离线翻译能力（macOS 15+ 且锚点已挂载）
+    private var supportsOfflineApple: Bool {
+        if #available(macOS 15.0, *) {
+            return config.anchor != nil
+        }
+        return false
     }
 
     /// 按主引擎策略排列引擎顺序（主引擎优先，其余作为降级链）
@@ -63,6 +77,9 @@ struct TranslationService {
         }
 
         switch config.primary {
+        case .offline:
+            // 仅离线：只用 Apple 本地翻译，绝不降级到任何网络引擎
+            push(apple)
         case .auto:
             // 离线优先：Apple → Google（免费无配置）→ OpenAI → DeepL
             push(apple)

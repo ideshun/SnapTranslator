@@ -87,7 +87,7 @@ struct SettingsView: View {
                 Button("下载 Apple 翻译语言包") {
                     onPrepareAppleLanguages()
                 }
-                Text("Apple 系统翻译完全离线，需 macOS 15+。首次使用前点按上方按钮下载语言包；未下载或失败时自动降级云引擎。Google 免费接口无需任何配置。")
+                Text("Apple 系统翻译完全离线，需 macOS 15+。首次使用前点按上方按钮下载语言包。「仅离线」模式只使用本地 Apple 翻译，永不联网；其余模式在 Apple 不可用或失败时会自动降级到云引擎（Google/OpenAI/DeepL，需联网）。Google 免费接口无需任何配置。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }

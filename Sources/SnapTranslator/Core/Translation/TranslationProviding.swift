@@ -10,6 +10,7 @@ protocol TranslationProviding {
 /// 主引擎选择策略
 enum PrimaryEngine: String, CaseIterable, Codable, Identifiable {
     case auto
+    case offline
     case apple
     case openai
     case deepl
@@ -20,6 +21,7 @@ enum PrimaryEngine: String, CaseIterable, Codable, Identifiable {
     var displayName: String {
         switch self {
         case .auto: return "自动（离线优先）"
+        case .offline: return "仅离线（纯本地，永不联网）"
         case .apple: return "Apple 系统翻译（离线）"
         case .openai: return "OpenAI 兼容接口"
         case .deepl: return "DeepL"
@@ -32,6 +34,7 @@ enum TranslationError: LocalizedError {
     case allFailed([String])
     case timeout
     case emptyResponse
+    case noOfflineEngine
 
     var errorDescription: String? {
         switch self {
@@ -41,6 +44,8 @@ enum TranslationError: LocalizedError {
             return "请求超时"
         case .emptyResponse:
             return "引擎返回了空结果"
+        case .noOfflineEngine:
+            return "当前系统不支持 Apple 离线翻译（需 macOS 15+ 并在设置中下载语言包），且「仅离线」模式拒绝联网翻译。请在设置中切换引擎或下载 Apple 语言包。"
         }
     }
 }
