@@ -1,8 +1,8 @@
 import Foundation
 
-/// OpenAI 兼容接口：可指向 OpenAI / new-api / OpenRouter 等任意兼容端点
+/// OpenAI 兼容接口：可指向 OpenAI / 智谱 AI / new-api / OpenRouter 等任意兼容端点
 struct OpenAICompatProvider: TranslationProviding {
-    let name = "OpenAI 兼容"
+    let name = "GLM5.2"
 
     private let baseURL: URL
     private let model: String
@@ -13,7 +13,7 @@ struct OpenAICompatProvider: TranslationProviding {
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/$", with: "", options: .regularExpression)
         let normalized = trimmed.hasSuffix("/chat/completions") ? trimmed : trimmed + "/chat/completions"
-        self.baseURL = URL(string: normalized) ?? URL(string: "https://api.openai.com/v1/chat/completions")!
+        self.baseURL = URL(string: normalized) ?? URL(string: "https://open.bigmodel.cn/api/paas/v4/chat/completions")!
         self.model = model
         self.apiKey = apiKey
     }
@@ -41,7 +41,10 @@ struct OpenAICompatProvider: TranslationProviding {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw TranslationError.allFailed(["OpenAI HTTP \(http.statusCode)"])
+            // 尝试解析错误响应中的 message 字段
+            let errMsg = Self.parseErrorMessage(data) ?? "HTTP \(http.statusCode)"
+            throw NSError(domain: "GLM5.2", code: http.statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "\(model) 请求失败：\(errMsg)"])
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
@@ -51,5 +54,21 @@ struct OpenAICompatProvider: TranslationProviding {
             throw TranslationError.emptyResponse
         }
         return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 解析 OpenAI 兼容 API 错误响应中的 message 字段
+    private static func parseErrorMessage(_ data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let error = json["error"] as? [String: Any],
+           let msg = error["message"] as? String {
+            return msg
+        }
+        if let msg = json["message"] as? String {
+            return msg
+        }
+        if let detail = json["detail"] as? String {
+            return detail
+        }
+        return nil
     }
 }

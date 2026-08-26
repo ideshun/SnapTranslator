@@ -1,0 +1,21 @@
+# 仓库 NPC 固定使用 GLM5.2 模型
+$:
+  issue.comment@npc:
+    default:
+      docker:
+        image: cnbcool/default-npc:latest
+      stages:
+        - name: npc go
+          type: npc:go
+          options:
+            model: glm-5.2
+
+  pull_request.comment@npc:
+    default:
+      docker:
+        image: cnbcool/default-npc:latest
+      stages:
+        - name: npc go
+          type: npc:go
+          options:
+            model: glm-5.2

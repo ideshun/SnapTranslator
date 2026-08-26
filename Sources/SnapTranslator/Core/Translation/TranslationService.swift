@@ -81,15 +81,16 @@ struct TranslationService {
             // 仅离线：只用 Apple 本地翻译，绝不降级到任何网络引擎
             push(apple)
         case .auto:
-            // 离线优先：Apple → Google（免费无配置）→ OpenAI → DeepL
+            // 离线优先：Apple → GLM5.2（OpenAI兼容，若已配置）→ Google → DeepL
+            // 智谱 AI 在国内可用，优先于 Google
             push(apple)
-            push(google)
             push(openai)
+            push(google)
             push(deepl)
         case .apple:
             push(apple)
-            push(google)
             push(openai)
+            push(google)
             push(deepl)
         case .openai:
             push(openai)
@@ -99,12 +100,12 @@ struct TranslationService {
         case .deepl:
             push(deepl)
             push(apple)
-            push(google)
             push(openai)
+            push(google)
         case .google:
             push(google)
-            push(apple)
             push(openai)
+            push(apple)
             push(deepl)
         }
         return ordered

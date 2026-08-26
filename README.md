@@ -17,18 +17,22 @@
 - **程序坞图标**：默认在程序坞中显示图标，应用名和菜单显示在系统菜单栏左上角；可在设置或菜单栏中关闭「在程序坞中显示」切换为纯菜单栏驻留
 - **远程桌面适配**：结果面板支持右上角关闭/最小化/全屏（macOS 红绿灯），方便 VNC 远程操作
 
-## 翻译引擎（离线优先）
+## 翻译引擎（默认 GLM5.2，优先可靠）
+
+**主引擎默认固定使用智谱 GLM-5.2 模型**（OpenAI 兼容接口，网络稳定），彻底摆脱对 Google / Apple 离线翻译的依赖。其余引擎作为降级兜底。
 
 | 顺序 | 引擎 | 配置 |
 |------|------|------|
-| 1 | Apple 系统翻译（完全离线，macOS 15+） | 首次使用前在设置中点「下载 Apple 翻译语言包」 |
-| 2 | Google 免费接口 | 零配置 |
-| 3 | OpenAI 兼容（OpenAI / new-api / OpenRouter） | 设置中填 Base URL + 模型 + API Key（存 Keychain） |
+| 1 | **GLM-5.2（OpenAI 兼容，默认）** | Base URL `https://open.bigmodel.cn/api/paas/v4`，模型 `glm-5.2`；在设置中填智谱 API Key（存 Keychain） |
+| 2 | Apple 系统翻译（完全离线，macOS 15+） | 首次使用前在设置中点「下载 Apple 翻译语言包」，翻译时若语言包未就绪会自动触发准备 |
+| 3 | Google 免费接口 | 零配置 |
 | 4 | DeepL | 设置中填 API Key（Free 档以 `:fx` 结尾） |
 
 单引擎失败/超时（15 秒）自动降级到下一个。源语言自动检测（NLLanguageRecognizer），目标语言在设置中配置（12 种）。
 
-> **「仅离线」模式**：设置 → 引擎 → 主引擎选「仅离线（纯本地，永不联网）」，则只使用 Apple 系统翻译，**绝不联网降级**到 Google/OpenAI/DeepL，适合网络受限（无法访问 Google 等）环境。需 macOS 15+ 并已下载 Apple 语言包，否则会提示当前系统不支持离线翻译。若你希望翻译结果可回退，选「自动（离线优先）」即可，Apple 失败时再联网兜底。
+> **如何使用 GLM-5.2**：默认主引擎已是 GLM-5.2。只需在 **设置 → 引擎** 中填入智谱开放平台的 API Key 即可，无需改动 Base URL 和模型名（已固定）。智谱开放平台申请地址：https://open.bigmodel.cn/
+
+> **「仅离线」模式**：设置 → 引擎 → 主引擎选「仅离线（纯本地，永不联网）」，则只使用 Apple 系统翻译，**绝不联网降级**到 GLM/Google/OpenAI/DeepL，适合完全离线环境。需 macOS 15+ 并已下载 Apple 语言包，否则会提示当前系统不支持离线翻译。
 
 ## 构建与安装
 
@@ -71,7 +75,7 @@ Sources/SnapTranslator/
 │   ├── Hotkey/     # Carbon 快捷键 + 录制控件
 │   ├── Capture/    # 框选遮罩 + 屏幕截图 + 坐标转换
 │   ├── OCR/        # Vision OCR + 语种检测
-│   ├── Translation/# 引擎协议 + Apple/OpenAI 兼容/DeepL/Google + 调度降级
+│   ├── Translation/# 引擎协议 + Apple/GLM5.2/DeepL/Google + 调度降级
 │   └── WordBook/   # 生词模型 + JSON 存储 + CSV 导出
 ├── Features/
 │   ├── ResultPanel/# NSPanel 置顶面板（对照视图、失焦透明）
