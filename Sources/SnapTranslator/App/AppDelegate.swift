@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let captureCoordinator = CaptureCoordinator()
     private let ocrService = VisionOCRService()
     private lazy var panelController = ResultPanelController(settings: settings)
+    private lazy var translationHost = TranslationHostWindowController()
     private var wordBookWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private var settingsSubscription: AnyCancellable?
@@ -55,6 +56,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 激活应用，确保菜单栏图标和菜单立即可见
         NSApp.activate(ignoringOtherApps: true)
+
+        // 预创建并显示翻译锚点窗口，确保 TranslationSession 随时可用
+        translationHost.show()
     }
 
     // MARK: - 程序坞策略
@@ -435,7 +439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 480),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -487,6 +491,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func translate(text: String, image: NSImage, model: ResultModel) {
+        // 确保翻译锚点窗口可见，TranslationSession 才能可靠触发
+        translationHost.show()
         let source = settings.sourceHint ?? LanguageDetector.detect(text)
         let service = TranslationService(
             config: .init(
@@ -495,10 +501,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 openaiModel: settings.openaiModel,
                 openaiAPIKey: settings.openaiAPIKey,
                 deeplAPIKey: settings.deeplAPIKey,
-                anchor: panelController.anchor
+                anchor: translationHost.anchor
             )
         )
         Task { [weak self] in
+            defer { self?.translationHost.hide() }
             do {
                 let (translation, provider) = try await service.translate(
                     text,
@@ -534,14 +541,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 触发 Apple 翻译语言包下载（面板需可见才能弹下载确认框）
+    /// 触发 Apple 翻译语言包下载（使用专用锚点窗口，不干扰结果面板）
     private func prepareAppleLanguages() {
-        panelController.show(near: nil)
-        let anchor = panelController.anchor
         let source = settings.sourceHint
         let target = settings.targetLanguage
         Task {
-            try? await anchor.prepareLanguages(source: source, target: target)
+            do {
+                try await translationHost.prepareLanguages(source: source, target: target)
+                // 准备完成后提示用户
+                let alert = NSAlert()
+                alert.messageText = "Apple 翻译语言包已就绪"
+                alert.informativeText = "目标语言：\(target.displayName)\n源语言：\(source?.displayName ?? "自动检测")\n\n现在可以离线翻译了。"
+                alert.addButton(withTitle: "好的")
+                alert.runModal()
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "语言包准备失败"
+                alert.informativeText = error.localizedDescription
+                alert.addButton(withTitle: "知道了")
+                alert.runModal()
+            }
+            translationHost.hide()
         }
     }
 

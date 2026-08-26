@@ -4,7 +4,6 @@ import SwiftUI
 /// 结果面板主视图：工具条 + 内容区（原图/译文/并排 + 各阶段状态）
 struct ResultPanelView: View {
     @ObservedObject var model: ResultModel
-    @ObservedObject var anchor: TranslationAnchor
     @ObservedObject var settings: SettingsStore
 
     let onCollect: (String, String) -> Void
@@ -22,13 +21,7 @@ struct ResultPanelView: View {
             statusBar
         }
         .frame(minWidth: 380, minHeight: 260)
-        // Apple 翻译锚点：隐藏在面板窗口中驱动 TranslationSession
-        .background {
-            if #available(macOS 15.0, *) {
-                TranslationAnchorView(anchor: anchor)
-                    .frame(width: 0, height: 0)
-            }
-        }
+
     }
 
     // MARK: - 工具条

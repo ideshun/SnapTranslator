@@ -5,7 +5,6 @@ import SwiftUI
 @MainActor
 final class ResultPanelController: NSObject, NSWindowDelegate {
     let model = ResultModel()
-    let anchor = TranslationAnchor()
 
     /// 语义回调（由 AppDelegate 注入）
     var onCollect: ((String, String) -> Void)?
@@ -59,7 +58,6 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
         panel.contentView = NSHostingView(
             rootView: ResultPanelView(
                 model: model,
-                anchor: anchor,
                 settings: settings,
                 onCollect: { [weak self] phrase, context in
                     self?.onCollect?(phrase, context)
@@ -98,7 +96,6 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
 
     func hide() {
         panel?.orderOut(nil)
-        anchor.cancelPending()
     }
 
     func toggle() {
