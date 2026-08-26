@@ -28,6 +28,8 @@
 
 单引擎失败/超时（15 秒）自动降级到下一个。源语言自动检测（NLLanguageRecognizer），目标语言在设置中配置（12 种）。
 
+> **「仅离线」模式**：设置 → 引擎 → 主引擎选「仅离线（纯本地，永不联网）」，则只使用 Apple 系统翻译，**绝不联网降级**到 Google/OpenAI/DeepL，适合网络受限（无法访问 Google 等）环境。需 macOS 15+ 并已下载 Apple 语言包，否则会提示当前系统不支持离线翻译。若你希望翻译结果可回退，选「自动（离线优先）」即可，Apple 失败时再联网兜底。
+
 ## 构建与安装
 
 要求：macOS 14+，Xcode Command Line Tools（`xcodebuild` 完整版 Xcode 亦可）。
