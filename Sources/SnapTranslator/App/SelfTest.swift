@@ -75,6 +75,10 @@ enum SelfTest {
         check("语种检测 日文",
               LanguageDetector.detect("こちらの商品はとても人気があります。") == .ja)
         check("语种检测 空文本", LanguageDetector.detect("") == nil)
+        check("语种检测 繁体中文",
+              LanguageDetector.detect("繁體中文測試，一起散步看看風景。") == .zhHant)
+        check("语种检测 en-US 变体",
+              LanguageDetector.detect("en-US The quick brown fox jumps over the lazy dog.") == .en)
     }
 
     // MARK: - Google 解析
