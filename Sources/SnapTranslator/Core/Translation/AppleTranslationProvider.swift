@@ -1,7 +1,7 @@
 import SwiftUI
 import Translation
 
-/// Apple 翻译锚点：持有当前请求，由结果面板窗口中的隐藏锚点视图消费执行
+/// Apple 翻译锚点：持有当前请求，由专用翻译锚点窗口中的隐藏锚点视图消费执行
 /// （Translation 框架只能通过挂载在窗口上的视图触发 TranslationSession）
 @MainActor
 final class TranslationAnchor: ObservableObject {
@@ -34,7 +34,7 @@ final class TranslationAnchor: ObservableObject {
         }
     }
 
-    /// 触发语言包下载确认弹窗（需 macOS 15+ 且结果面板可见）
+    /// 触发语言包下载确认弹窗（需 macOS 15+，通过专用翻译锚点窗口触发）
     func prepareLanguages(source: Language?, target: Language) async throws {
         _ = try await withCheckedThrowingContinuation { continuation in
             request = Request(
@@ -47,7 +47,7 @@ final class TranslationAnchor: ObservableObject {
         }
     }
 
-    /// 面板关闭时取消未完成请求，避免悬挂
+    /// 取消未完成请求，避免悬挂（仅取消尚未被处理的请求）
     func cancelPending() {
         if let pending = request {
             request = nil
@@ -56,35 +56,49 @@ final class TranslationAnchor: ObservableObject {
     }
 }
 
-/// 隐藏在结果面板中的锚点视图：变更 configuration 触发 translationTask
+/// 隐藏在专用翻译锚点窗口中的视图：变更 configuration 触发 translationTask
 @available(macOS 15.0, *)
 struct TranslationAnchorView: View {
     @ObservedObject var anchor: TranslationAnchor
     @State private var config: TranslationSession.Configuration?
 
+    /// 安全完成请求：仅当请求未被取消时才恢复 continuation
+    private func finish(
+        request: TranslationAnchor.Request,
+        result: Result<String, Error>
+    ) {
+        // 检查请求是否仍然有效（未被 cancelPending 取消）
+        guard anchor.request?.id == request.id else { return }
+        anchor.request = nil
+        switch result {
+        case .success(let value): request.continuation.resume(returning: value)
+        case .failure(let error): request.continuation.resume(throwing: error)
+        }
+    }
+
     var body: some View {
         Color.clear
-            .frame(width: 0, height: 0)
+            .frame(width: 1, height: 1)
             .translationTask(config) { session in
                 guard let request = anchor.request else { return }
                 do {
                     if request.prepareOnly {
                         try await session.prepareTranslation()
-                        request.continuation.resume(returning: "")
+                        finish(request: request, result: .success(""))
                     } else {
                         // 尝试直接翻译；若因语言包未就绪失败，先准备语言包再重试一次
                         do {
                             let response = try await session.translate(request.text)
-                            request.continuation.resume(returning: response.targetText)
+                            finish(request: request, result: .success(response.targetText))
                         } catch {
                             // 语言包可能未下载或初始化失败，先准备再重试
                             try await session.prepareTranslation()
                             let response = try await session.translate(request.text)
-                            request.continuation.resume(returning: response.targetText)
+                            finish(request: request, result: .success(response.targetText))
                         }
                     }
                 } catch {
-                    request.continuation.resume(throwing: error)
+                    finish(request: request, result: .failure(error))
                 }
             }
             .onChange(of: anchor.request?.id) { _, newID in

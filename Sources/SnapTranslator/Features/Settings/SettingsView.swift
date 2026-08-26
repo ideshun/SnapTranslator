@@ -84,8 +84,11 @@ struct SettingsView: View {
                 SecureField("API Key（Free 档以 :fx 结尾）", text: $settings.deeplAPIKey)
             }
             Section {
-                Button("下载 Apple 翻译语言包") {
-                    onPrepareAppleLanguages()
+                HStack {
+                    Button("下载 Apple 翻译语言包") {
+                        onPrepareAppleLanguages()
+                    }
+                    .help("系统会弹出确认框，下载源语言和目标语言对应的离线翻译语言包")
                 }
                 Text("Apple 系统翻译完全离线，需 macOS 15+。翻译时若语言包未就绪会自动触发准备。「仅离线」模式只使用本地 Apple 翻译，永不联网；其余模式在 Apple 不可用或失败时会自动降级到云引擎（智谱 AI/Google/DeepL，需联网）。")
                     .font(.system(size: 12))

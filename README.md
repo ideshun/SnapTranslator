@@ -24,7 +24,7 @@
 | 顺序 | 引擎 | 配置 |
 |------|------|------|
 | 1 | **GLM-5.2（OpenAI 兼容，默认）** | Base URL `https://open.bigmodel.cn/api/paas/v4`，模型 `glm-5.2`；在设置中填智谱 API Key（存 Keychain） |
-| 2 | Apple 系统翻译（完全离线，macOS 15+） | 首次使用前在设置中点「下载 Apple 翻译语言包」，翻译时若语言包未就绪会自动触发准备 |
+| 2 | Apple 系统翻译（完全离线，macOS 15+） | 首次使用前在设置中点「下载 Apple 翻译语言包」（使用专用锚点窗口，不干扰操作界面），翻译时若语言包未就绪会自动触发准备 |
 | 3 | Google 免费接口 | 零配置 |
 | 4 | DeepL | 设置中填 API Key（Free 档以 `:fx` 结尾） |
 
