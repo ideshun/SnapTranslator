@@ -32,4 +32,7 @@ final class OverlayWindow: NSWindow {
     }
 
     override var canBecomeKey: Bool { true }
+
+    /// 窗口刚出现时点击即可响应，无需先激活一次（修复首次拖拽需点两次的问题）
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

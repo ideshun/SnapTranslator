@@ -22,9 +22,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         wordBook = WordBookStore()
 
+        // 按设置恢复程序坞显隐（Info.plist 默认 LSUIElement，需要时切换为 regular 才有 Dock 图标）
+        NSApp.setActivationPolicy(settings.showInDock ? .regular : .accessory)
+
         setupStatusItem()
         wirePanelActions()
         applySettings()
+
+        // 首次启动展示结果面板（空闲态），让用户明确看到应用已就绪
+        if !UserDefaults.standard.bool(forKey: "st.hasLaunched") {
+            UserDefaults.standard.set(true, forKey: "st.hasLaunched")
+            panelController.show(near: nil)
+        }
 
         settingsSubscription = settings.objectWillChange
             .debounce(for: .milliseconds(200), scheduler: RunLoop.main)
@@ -44,10 +53,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(
-            systemSymbolName: "character.bubble",
-            accessibilityDescription: "SnapTranslator"
-        )
+        if let button = item.button {
+            let image = NSImage(
+                systemSymbolName: "character.bubble",
+                accessibilityDescription: "SnapTranslator"
+            )
+            image?.isTemplate = true
+            button.image = image
+            button.toolTip = "SnapTranslator"
+        }
         statusItem = item
         item.menu = buildMenu()
     }
@@ -78,6 +92,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         toggleItem.target = self
         menu.addItem(toggleItem)
+
+        menu.addItem(.separator())
+
+        let dockItem = NSMenuItem(
+            title: "在程序坞中显示",
+            action: #selector(toggleDock),
+            keyEquivalent: ""
+        )
+        dockItem.target = self
+        dockItem.state = settings.showInDock ? .on : .off
+        menu.addItem(dockItem)
 
         menu.addItem(.separator())
 
@@ -141,9 +166,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panelController.onRetry = { [weak self] in
             self?.retryTranslation()
         }
+        panelController.onSwapLanguages = { [weak self] in
+            self?.swapLanguages()
+        }
+    }
+
+    /// 交换默认源/目标语言方向（如英译中 ↔ 中译英），下次截屏生效
+    @objc private func swapLanguages() {
+        let model = panelController.model
+        // 源语言：优先用已识别到的源语言，其次用设置里的 sourceHint，再退化为目标语言
+        let currentSource = model.sourceLanguage ?? settings.sourceHint ?? settings.targetLanguage
+        let currentTarget = settings.targetLanguage
+        guard currentSource != currentTarget else { return }
+
+        // 交换持久化默认方向：新源 = 原目标，新目标 = 原源
+        settings.sourceHint = currentTarget
+        settings.targetLanguage = currentSource
+        model.collectNotice = "已切换语向：\(currentTarget.displayName) → \(currentSource.displayName)"
+        Task { [weak model] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            model?.collectNotice = ""
+        }
+    }
+
+    // MARK: - 生命周期
+
+    /// 关闭最后一个窗口不退出应用，保持菜单栏驻留
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    /// 点击程序坞图标时唤起结果面板，避免“不知道应用是否启动”
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            panelController.show(near: nil)
+        }
+        return true
     }
 
     // MARK: - 动作
+
+    @objc private func toggleDock() {
+        settings.showInDock.toggle()
+    }
 
     @objc private func startCapture() {
         captureCoordinator.begin()

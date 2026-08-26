@@ -3,13 +3,14 @@ import SwiftUI
 
 /// 结果置顶面板：NSPanel（nonactivating + floating），失焦自动降透明度
 @MainActor
-final class ResultPanelController {
+final class ResultPanelController: NSObject, NSWindowDelegate {
     let model = ResultModel()
     let anchor = TranslationAnchor()
 
     /// 语义回调（由 AppDelegate 注入）
     var onCollect: ((String, String) -> Void)?
     var onRetry: (() -> Void)?
+    var onSwapLanguages: (() -> Void)?
 
     private let settings: SettingsStore
     private var panel: NSPanel?
@@ -17,6 +18,15 @@ final class ResultPanelController {
 
     init(settings: SettingsStore) {
         self.settings = settings
+        super.init()
+    }
+
+    // MARK: - NSWindowDelegate
+
+    /// 点关闭（红绿灯/⌘W）时隐藏面板而非销毁窗口，保持菜单栏驻留
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        hide()
+        return false
     }
 
     var isVisible: Bool {
@@ -29,18 +39,22 @@ final class ResultPanelController {
         }
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 480, height: 400),
-            styleMask: [.titled, .resizable, .fullSizeContentView, .nonactivatingPanel],
+            // 含 closable/miniaturizable 以支持远程桌面（VNC）右上角红绿灯关闭/最小化
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         panel.title = "SnapTranslator"
         panel.level = settings.alwaysOnTop ? .floating : .normal
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isFloatingPanel = true
+        panel.isFloatingPanel = settings.alwaysOnTop
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
         panel.backgroundColor = .windowBackgroundColor
+        panel.isReleasedWhenClosed = false
         panel.setFrameAutosaveName("ResultPanelFrame")
+        // 关闭（右上角红绿灯/⌘W）时隐藏而非退出，保持菜单栏驻留
+        panel.delegate = self
         panel.contentView = NSHostingView(
             rootView: ResultPanelView(
                 model: model,
@@ -57,6 +71,9 @@ final class ResultPanelController {
                 },
                 onTogglePin: { [weak self] in
                     self?.togglePin()
+                },
+                onSwapLanguages: { [weak self] in
+                    self?.onSwapLanguages?()
                 }
             )
         )
@@ -90,11 +107,15 @@ final class ResultPanelController {
 
     /// 应用置顶设置（设置变化时调用）
     func applyPin(alwaysOnTop: Bool) {
-        panel?.level = alwaysOnTop ? .floating : .normal
+        guard let panel else { return }
+        panel.isFloatingPanel = alwaysOnTop
+        panel.level = alwaysOnTop ? .floating : .normal
     }
 
     private func togglePin() {
         settings.alwaysOnTop.toggle()
+        // 立即生效，避免依赖 settings.objectWillChange 的 200ms 防抖
+        applyPin(alwaysOnTop: settings.alwaysOnTop)
     }
 
     /// 面板贴近选区展示：右侧优先，越界换左侧/下方
