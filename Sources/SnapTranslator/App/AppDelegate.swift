@@ -22,10 +22,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         wordBook = WordBookStore()
 
-        // 按设置恢复程序坞显隐（Info.plist 默认 LSUIElement，需要时切换为 regular 才有 Dock 图标）
-        NSApp.setActivationPolicy(settings.showInDock ? .regular : .accessory)
-
+        // 菜单栏图标必须在任何窗口创建前设置，确保可靠显示
         setupStatusItem()
+
+        // 按设置恢复程序坞显隐
+        applyDockPolicy()
+
+        // 设置主菜单（程序坞图标模式下左上角显示应用名和菜单）
+        setupMainMenu()
+
         wirePanelActions()
         applySettings()
 
@@ -47,21 +52,150 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         captureCoordinator.onPermissionDenied = { [weak self] in
             self?.notifyPermissionDenied()
         }
+
+        // 激活应用，确保菜单栏图标和菜单立即可见
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - 程序坞策略
+
+    /// 根据设置切换程序坞显隐（LSUIElement 模式下需运行时切换激活策略）
+    private func applyDockPolicy() {
+        NSApp.setActivationPolicy(settings.showInDock ? .regular : .accessory)
+    }
+
+    // MARK: - 主菜单（左上角应用菜单）
+
+    /// 设置主菜单：应用名 + 文件/编辑/窗口菜单
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+
+        // 应用菜单（点击左上角应用名显示）
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+        let appMenu = NSMenu()
+        appMenuItem.submenu = appMenu
+
+        let aboutItem = NSMenuItem(
+            title: "关于 SnapTranslator",
+            action: #selector(showAbout),
+            keyEquivalent: ""
+        )
+        aboutItem.target = self
+        appMenu.addItem(aboutItem)
+
+        appMenu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(
+            title: "设置…",
+            action: #selector(openSettings),
+            keyEquivalent: ","
+        )
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
+
+        appMenu.addItem(.separator())
+
+        let quitItem = NSMenuItem(
+            title: "退出 SnapTranslator",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        appMenu.addItem(quitItem)
+
+        // 文件菜单
+        let fileMenuItem = NSMenuItem()
+        mainMenu.addItem(fileMenuItem)
+        let fileMenu = NSMenu(title: "文件")
+        fileMenuItem.submenu = fileMenu
+
+        let captureItem = NSMenuItem(
+            title: "截屏翻译",
+            action: #selector(startCapture),
+            keyEquivalent: "s"
+        )
+        captureItem.keyEquivalentModifierMask = [.option]
+        captureItem.target = self
+        fileMenu.addItem(captureItem)
+
+        let recaptureItem = NSMenuItem(
+            title: "重截上次区域",
+            action: #selector(recaptureLastRegion),
+            keyEquivalent: "s"
+        )
+        recaptureItem.keyEquivalentModifierMask = [.option, .shift]
+        recaptureItem.target = self
+        fileMenu.addItem(recaptureItem)
+
+        let toggleItem = NSMenuItem(
+            title: "显示/隐藏窗口",
+            action: #selector(togglePanel),
+            keyEquivalent: "t"
+        )
+        toggleItem.keyEquivalentModifierMask = [.option]
+        toggleItem.target = self
+        fileMenu.addItem(toggleItem)
+
+        fileMenu.addItem(.separator())
+
+        let wordBookItem = NSMenuItem(
+            title: "生词本",
+            action: #selector(openWordBook),
+            keyEquivalent: ""
+        )
+        wordBookItem.target = self
+        fileMenu.addItem(wordBookItem)
+
+        // 窗口菜单
+        let windowMenuItem = NSMenuItem()
+        mainMenu.addItem(windowMenuItem)
+        let windowMenu = NSMenu(title: "窗口")
+        windowMenuItem.submenu = windowMenu
+
+        let minimizeItem = NSMenuItem(
+            title: "最小化",
+            action: #selector(NSWindow.miniaturize(_:)),
+            keyEquivalent: "m"
+        )
+        windowMenu.addItem(minimizeItem)
+
+        let zoomItem = NSMenuItem(
+            title: "缩放",
+            action: #selector(NSWindow.zoom(_:)),
+            keyEquivalent: ""
+        )
+        windowMenu.addItem(zoomItem)
+
+        NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func showAbout() {
+        NSApp.orderFrontStandardAboutPanel(nil)
     }
 
     // MARK: - 菜单栏
 
     private func setupStatusItem() {
+        // 使用固定长度确保图标始终可见
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            // 优先使用 SF Symbol 模板图（自动适配菜单栏深浅色）
-            var image = NSImage(
-                systemSymbolName: "character.bubble",
-                accessibilityDescription: "SnapTranslator"
-            )
-            // 回退：SF Symbol 加载失败时，用打包进 bundle 的 App 图标
+            // 依次尝试多个 SF Symbol，最后用程序化绘制兜底
+            let symbols = [
+                "character.bubble.fill",
+                "character.bubble",
+                "translate",
+                "text.bubble",
+            ]
+            var image: NSImage?
+            for symbol in symbols {
+                if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: "SnapTranslator") {
+                    image = img
+                    break
+                }
+            }
             if image == nil {
-                image = NSImage(named: NSImage.applicationIconName)
+                // 程序化绘制一个简单的翻译气泡图标
+                image = Self.makeFallbackIcon()
             }
             image?.isTemplate = true
             button.image = image
@@ -71,8 +205,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = buildMenu()
     }
 
+    /// 程序化绘制菜单栏图标（SF Symbol 全部加载失败时的兜底）
+    private static func makeFallbackIcon() -> NSImage {
+        let size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        // 画一个圆角气泡 + 两条文字线
+        NSColor.labelColor.set()
+        let bubble = NSBezierPath(roundedRect: NSRect(x: 1, y: 1, width: 16, height: 13), xRadius: 3, yRadius: 3)
+        bubble.fill()
+        // 气泡尾巴
+        let tail = NSBezierPath()
+        tail.move(to: NSPoint(x: 5, y: 14))
+        tail.line(to: NSPoint(x: 3, y: 17))
+        tail.line(to: NSPoint(x: 9, y: 14))
+        tail.close()
+        tail.fill()
+        // 文字线条
+        NSColor.windowBackgroundColor.set()
+        let line1 = NSRect(x: 4, y: 9, width: 10, height: 1.5)
+        let line2 = NSRect(x: 4, y: 6, width: 7, height: 1.5)
+        NSBezierPath(rect: line1).fill()
+        NSBezierPath(rect: line2).fill()
+        image.unlockFocus()
+        return image
+    }
+
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
+
+        // 应用名标题
+        let titleItem = NSMenuItem(title: "SnapTranslator", action: nil, keyEquivalent: "")
+        titleItem.isEnabled = false
+        menu.addItem(titleItem)
+
+        menu.addItem(.separator())
 
         let captureItem = NSMenuItem(
             title: "截屏翻译（\(settings.hotkeyCapture.display)）",
@@ -174,6 +341,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panelController.onSwapLanguages = { [weak self] in
             self?.swapLanguages()
         }
+        panelController.onOpenWordBook = { [weak self] in
+            self?.openWordBook()
+        }
     }
 
     /// 交换默认源/目标语言方向（如英译中 ↔ 中译英），下次截屏生效
@@ -213,6 +383,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleDock() {
         settings.showInDock.toggle()
+        applyDockPolicy()
+        // 切换后刷新菜单栏菜单中的勾选状态
+        statusItem?.menu = buildMenu()
     }
 
     @objc private func startCapture() {
