@@ -13,9 +13,10 @@ final class ResultModel: ObservableObject {
     }
 
     enum Tab: String, CaseIterable, Identifiable {
-        case originalImage = "原图"
-        case translation = "译文"
-        case sideBySide = "并排"
+        case recognize = "识别结果"
+        case translation = "翻译"
+        case sideBySide = "对照"
+        case oneToOne = "1:1"
 
         var id: String { rawValue }
     }
@@ -33,9 +34,27 @@ final class ResultModel: ObservableObject {
     /// 收藏成功后的短暂提示
     @Published var collectNotice = ""
 
+    /// 识别历史记录
+    @Published var history: [HistoryEntry] = []
+
     /// 重试所需的上次请求内容
     private(set) var retryImage: NSImage?
     private(set) var retrySourceText = ""
+
+    struct HistoryEntry: Identifiable, Equatable {
+        let id = UUID()
+        let image: NSImage
+        let sourceText: String
+        let translatedText: String
+        let timestamp: Date
+        let sourceLanguage: Language?
+        let targetLanguage: Language
+        let providerName: String
+
+        static func == (lhs: HistoryEntry, rhs: HistoryEntry) -> Bool {
+            lhs.id == rhs.id
+        }
+    }
 
     func begin(image: NSImage, target: Language) {
         reset()
@@ -56,6 +75,20 @@ final class ResultModel: ObservableObject {
         providerName = provider
         sourceLanguage = source
         phase = .done
+
+        // 记录识别历史
+        if let image {
+            let entry = HistoryEntry(
+                image: image,
+                sourceText: sourceText,
+                translatedText: translation,
+                timestamp: Date(),
+                sourceLanguage: source,
+                targetLanguage: targetLanguage,
+                providerName: provider
+            )
+            history.insert(entry, at: 0)
+        }
     }
 
     func failed(_ message: String) {
