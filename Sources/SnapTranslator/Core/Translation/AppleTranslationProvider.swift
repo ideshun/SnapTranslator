@@ -15,6 +15,9 @@ final class TranslationAnchor: ObservableObject {
     }
 
     @Published var request: Request?
+    /// 递增触发器：强制 SwiftUI 重新触发 translationTask
+    /// 即使 source/target 相同（Configuration 相等），也能通过变化的值触发
+    @Published private(set) var trigger: Int = 0
 
     /// 使用 identifier 构造 Locale.Language，兼容所有 BCP 47 格式（含 zh-Hans 等复合码）
     private static func localeLanguage(_ language: Language) -> Locale.Language {
@@ -31,6 +34,7 @@ final class TranslationAnchor: ObservableObject {
                 prepareOnly: false,
                 continuation: continuation
             )
+            trigger += 1
         }
     }
 
@@ -44,6 +48,7 @@ final class TranslationAnchor: ObservableObject {
                 prepareOnly: true,
                 continuation: continuation
             )
+            trigger += 1
         }
     }
 
@@ -86,33 +91,45 @@ struct TranslationAnchorView: View {
                         try await session.prepareTranslation()
                         finish(request: request, result: .success(""))
                     } else {
-                        // 尝试直接翻译；若因语言包未就绪失败，先准备语言包再重试一次
+                        // 尝试直接翻译
                         do {
                             let response = try await session.translate(request.text)
                             finish(request: request, result: .success(response.targetText))
                         } catch {
-                            // 语言包可能未下载或初始化失败，先准备再重试
-                            try await session.prepareTranslation()
-                            let response = try await session.translate(request.text)
-                            finish(request: request, result: .success(response.targetText))
+                            // 仅当错误确实与语言包相关时，才触发语言包准备并重试
+                            let errorDesc = String(describing: error).lowercased()
+                            let languageRelatedKeywords = ["language", "pack", "download", "languagedownload", "unsupported", "not download"]
+                            let needsLanguagePack = languageRelatedKeywords.contains { errorDesc.contains($0) }
+
+                            if needsLanguagePack {
+                                do {
+                                    try await session.prepareTranslation()
+                                    let response = try await session.translate(request.text)
+                                    finish(request: request, result: .success(response.targetText))
+                                } catch let prepareError {
+                                    finish(request: request, result: .failure(prepareError))
+                                }
+                            } else {
+                                // 非语言包相关错误，直接上报
+                                finish(request: request, result: .failure(error))
+                            }
                         }
                     }
                 } catch {
                     finish(request: request, result: .failure(error))
                 }
             }
-            .onChange(of: anchor.request?.id) { _, newID in
-                guard let newID else { return }
+            .onChange(of: anchor.trigger) { _, newTrigger in
+                guard newTrigger > 0 else { return }
                 guard let request = anchor.request else { return }
-                // 先置 nil 再设值：相同语言对时 Configuration 相等，
-                // SwiftUI 不会重触发 translationTask，需要强制两段变更
+                // 强制两段变更：先 nil 再设置，确保相同语言对也能重新触发
                 config = nil
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     // 确保 request 仍是本次触发的，避免旧请求覆盖新请求
-                    guard anchor.request?.id == newID, let req = anchor.request else { return }
+                    guard anchor.request?.id == request.id, let current = anchor.request else { return }
                     config = TranslationSession.Configuration(
-                        source: req.source,
-                        target: req.target
+                        source: current.source,
+                        target: current.target
                     )
                 }
             }

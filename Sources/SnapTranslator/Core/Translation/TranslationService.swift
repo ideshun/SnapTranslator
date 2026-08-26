@@ -22,6 +22,11 @@ struct TranslationService {
     func translate(_ text: String, from source: Language?, to target: Language) async throws -> (String, String) {
         var failures: [String] = []
 
+        // 源语言与目标语言相同：直接返回原文，不做无意义的翻译
+        if let source, source == target {
+            return (text, "无需翻译")
+        }
+
         // 仅离线模式下 Apple 翻译不可用（系统 < macOS 15）时，直接给出明确错误，绝不联网
         if config.primary == .offline && !supportsOfflineApple {
             throw TranslationError.noOfflineEngine

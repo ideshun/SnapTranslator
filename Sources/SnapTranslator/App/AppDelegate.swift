@@ -353,10 +353,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 交换默认源/目标语言方向（如英译中 ↔ 中译英），下次截屏生效
     @objc private func swapLanguages() {
         let model = panelController.model
-        // 源语言：优先用已识别到的源语言，其次用设置里的 sourceHint，再退化为目标语言
-        let currentSource = model.sourceLanguage ?? settings.sourceHint ?? settings.targetLanguage
-        let currentTarget = settings.targetLanguage
-        guard currentSource != currentTarget else { return }
+        // 源语言：优先用已识别到的源语言，其次用设置里的 sourceHint
+        let currentSource = model.sourceLanguage ?? settings.sourceHint
+        // 目标语言：使用面板上当前显示的实际目标语言（可能已被自动调整）
+        let currentTarget = model.targetLanguage
+        guard let currentSource, currentSource != currentTarget else { return }
 
         // 交换持久化默认方向：新源 = 原目标，新目标 = 原源
         settings.sourceHint = currentTarget
@@ -464,7 +465,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let languages = self.settings.sourceHint.map { [$0.visionCode, "en-US"] }
+                // 始终包含全语种识别，避免 sourceHint 限制 OCR 导致中文等语言无法识别
+                let languages = Self.allRecognitionLanguages(hint: self.settings.sourceHint)
                 let result = try await self.ocrService.recognize(image, languages: languages)
                 guard !result.fullText.isEmpty else {
                     model.failed("未识别到文字，请调整区域后重试")
@@ -477,6 +479,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 model.failed("OCR 失败：\(error.localizedDescription)")
             }
         }
+    }
+
+    /// 构建 OCR 识别语言集：始终包含默认全语种，sourceHint 仅作优先级前置
+    private static func allRecognitionLanguages(hint: Language?) -> [String] {
+        var languages = VisionOCRService.defaultRecognitionLanguages
+        if let hintCode = hint?.visionCode, !languages.contains(hintCode) {
+            languages.insert(hintCode, at: 0)
+        }
+        return languages
+    }
+
+    /// 若检测到的源语言与目标语言相同，自动切换目标为英文
+    /// 例如用户默认目标为中文，截图中文内容时自动改为翻译到英文
+    private func effectiveTargetLanguage(source: Language?) -> Language {
+        let target = settings.targetLanguage
+        guard let source, source == target else { return target }
+        // 源语言 == 目标语言，自动切换到英文作为翻译目标
+        return .en
     }
 
     private func retryTranslation() {
@@ -493,7 +513,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func translate(text: String, image: NSImage, model: ResultModel) {
         // 确保翻译锚点窗口可见，TranslationSession 才能可靠触发
         translationHost.show()
-        let source = settings.sourceHint ?? LanguageDetector.detect(text)
+        // 源语言判定：优先使用语言检测结果，sourceHint 仅作为兜底
+        // 原因：sourceHint 可能被用户设置为英语，但截图内容是中文，强制使用 sourceHint 会导致翻译失败
+        let detected = LanguageDetector.detect(text)
+        let source = detected ?? settings.sourceHint
+        // 若源语言与目标语言相同（如截图中文但目标也是中文），自动改为翻译到英文
+        let target = effectiveTargetLanguage(source: source)
         let service = TranslationService(
             config: .init(
                 primary: settings.primaryEngine,
@@ -504,13 +529,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 anchor: translationHost.anchor
             )
         )
+        // 更新面板中的实际目标语言（可能已被 effectiveTargetLanguage 自动调整）
+        model.targetLanguage = target
         Task { [weak self] in
             defer { self?.translationHost.hide() }
             do {
                 let (translation, provider) = try await service.translate(
                     text,
                     from: source,
-                    to: self?.settings.targetLanguage ?? .zhHans
+                    to: target
                 )
                 model.finished(translation: translation, provider: provider, source: source)
             } catch {
@@ -545,13 +572,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func prepareAppleLanguages() {
         let source = settings.sourceHint
         let target = settings.targetLanguage
+        // 源语言为 nil（自动检测）时使用英文作为显式源语言，确保语言包能正确下载
+        let effectiveSource = source ?? .en
         Task {
             do {
-                try await translationHost.prepareLanguages(source: source, target: target)
+                try await translationHost.prepareLanguages(source: effectiveSource, target: target)
                 // 准备完成后提示用户
                 let alert = NSAlert()
                 alert.messageText = "Apple 翻译语言包已就绪"
-                alert.informativeText = "目标语言：\(target.displayName)\n源语言：\(source?.displayName ?? "自动检测")\n\n现在可以离线翻译了。"
+                alert.informativeText = "目标语言：\(target.displayName)\n源语言：\(effectiveSource.displayName)\n\n现在可以离线翻译了。"
                 alert.addButton(withTitle: "好的")
                 alert.runModal()
             } catch {

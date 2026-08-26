@@ -27,7 +27,10 @@ enum OCRError: LocalizedError {
 
 /// Apple Vision 端上 OCR，离线免费
 final class VisionOCRService {
-    static let defaultRecognitionLanguages = ["zh-Hans", "en-US", "ja-JP", "ko-KR"]
+    static let defaultRecognitionLanguages = [
+        "zh-Hans", "en-US", "ja-JP", "ko-KR",
+        "fr-FR", "de-DE", "es-ES", "pt-BR", "it-IT", "ru-RU",
+    ]
 
     /// 识别图片文字；languages 传 nil 时使用默认多语种集合
     func recognize(_ image: NSImage, languages: [String]? = nil) async throws -> OCRResult {
