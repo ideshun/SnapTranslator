@@ -30,6 +30,7 @@ struct SettingsView: View {
                     Text(language.displayName).tag(Language?.some(language))
                 }
             }
+            Toggle("在程序坞中显示图标", isOn: $settings.showInDock)
             Toggle("结果窗口置顶", isOn: $settings.alwaysOnTop)
             HStack {
                 Text("失焦透明度")

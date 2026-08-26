@@ -28,6 +28,13 @@ final class SettingsStore: ObservableObject {
             applyLaunchAtLogin()
         }
     }
+    /// 是否在程序坞（Dock）中显示图标；关闭时纯菜单栏驻留
+    @Published var showInDock: Bool {
+        didSet {
+            defaults.set(showInDock, forKey: "st.showInDock")
+            applyShowInDock()
+        }
+    }
 
     // MARK: - 快捷键
 
@@ -65,6 +72,7 @@ final class SettingsStore: ObservableObject {
         alwaysOnTop = defaults.object(forKey: "st.alwaysOnTop") as? Bool ?? true
         unfocusedOpacity = defaults.object(forKey: "st.unfocusedOpacity") as? Double ?? 0.3
         launchAtLogin = defaults.bool(forKey: "st.launchAtLogin")
+        showInDock = defaults.object(forKey: "st.showInDock") as? Bool ?? false
         hotkeyCapture = Self.loadHotkey("st.hotkey.capture")
             ?? HotkeySpec(keyCode: 1, modifiers: HotkeySpec.optionModifier) // ⌥S
         hotkeyRecapture = Self.loadHotkey("st.hotkey.recapture")
@@ -93,6 +101,13 @@ final class SettingsStore: ObservableObject {
         } catch {
             NSLog("快捷键读取失败 key=%@ error=%@", key, error.localizedDescription)
             return nil
+        }
+    }
+
+    private func applyShowInDock() {
+        NSApp.setActivationPolicy(showInDock ? .regular : .accessory)
+        if showInDock {
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 

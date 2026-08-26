@@ -16,7 +16,9 @@ final class CaptureCoordinator {
     /// 开始框选：所有屏幕盖上遮罩
     func begin() {
         guard overlays.isEmpty else { return }
-        for screen in NSScreen.screens {
+        // 激活应用并让遮罩成为 key，避免首次鼠标按下被“激活窗口”吞掉
+        NSApp.activate(ignoringOtherApps: true)
+        for (index, screen) in NSScreen.screens.enumerated() {
             let overlay = OverlayWindow(screen: screen)
             overlay.onRegionSelected = { [weak self] rect in
                 self?.finishSelection(rect: rect)
@@ -25,7 +27,10 @@ final class CaptureCoordinator {
                 self?.cancel()
             }
             overlays.append(overlay)
-            overlay.makeKeyAndOrderFront(nil)
+            overlay.orderFront(nil)
+            if index == 0 {
+                overlay.makeKeyAndOrderFront(nil)
+            }
         }
         NSCursor.crosshair.push()
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in

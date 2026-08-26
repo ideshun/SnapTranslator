@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 结果面板主视图：工具条 + 内容区（原图/译文/并排 + 各阶段状态）
@@ -10,6 +11,7 @@ struct ResultPanelView: View {
     let onRetry: () -> Void
     let onClose: () -> Void
     let onTogglePin: () -> Void
+    let onSwapLanguages: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,13 +45,22 @@ struct ResultPanelView: View {
 
             Spacer(minLength: 8)
 
-            if model.phase == .done, !model.selectedText.isEmpty {
+            if model.phase == .done {
                 Button {
-                    onCollect(model.selectedText, model.sourceText)
+                    let phrase = model.selectedText.isEmpty ? model.sourceText : model.selectedText
+                    onCollect(phrase, model.sourceText)
                 } label: {
-                    Label("收藏选中", systemImage: "bookmark")
+                    Label("收藏", systemImage: "bookmark")
                 }
-                .help("收藏选中内容到生词本")
+                .help("收藏选中内容；未选中时收藏整段原文")
+
+                Button {
+                    let text = model.sourceText.isEmpty ? model.translatedText : model.sourceText
+                    onCollect(text, text)
+                } label: {
+                    Label("收藏整句", systemImage: "text.badge.star")
+                }
+                .help("收藏整句到生词本")
             }
 
             Button {
@@ -64,6 +75,13 @@ struct ResultPanelView: View {
                 Image(systemName: settings.alwaysOnTop ? "pin.fill" : "pin")
             }
             .help(settings.alwaysOnTop ? "取消置顶" : "置顶窗口")
+
+            if model.phase == .done {
+                Button(action: onSwapLanguages) {
+                    Image(systemName: "arrow.left.arrow.right")
+                }
+                .help("交换源语言/目标语言并重新翻译")
+            }
 
             Button(action: onClose) {
                 Image(systemName: "xmark")
@@ -152,20 +170,87 @@ struct ResultPanelView: View {
 
         case .sideBySide:
             HSplitView {
-                SelectableTextView(
-                    text: model.sourceText,
-                    onSelectionChange: { model.selectedText = $0 },
-                    onCollect: onCollect
-                )
-                .frame(minWidth: 160)
-                SelectableTextView(
+                // 左栏：截图原图
+                if let image = model.image {
+                    imagePane(image: image)
+                }
+                // 右栏：译文以图片形式渲染（保留原文版式观感）
+                translatedImagePane(
                     text: model.translatedText,
-                    onSelectionChange: { model.selectedText = $0 },
-                    onCollect: onCollect
+                    referenceImage: model.image
                 )
-                .frame(minWidth: 160)
             }
         }
+    }
+
+    // MARK: - 图片视图
+
+    /// 原图浏览窗格
+    @ViewBuilder
+    private func imagePane(image: NSImage) -> some View {
+        ScrollView([.vertical, .horizontal]) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity)
+                .padding(8)
+        }
+        .frame(minWidth: 160)
+    }
+
+    /// 译文图片窗格：按参考图尺寸把译文排版为图片，与左栏原图等比对照
+    @ViewBuilder
+    private func translatedImagePane(text: String, referenceImage: NSImage?) -> some View {
+        ScrollView([.vertical, .horizontal]) {
+            if let image = Self.renderTextAsImage(text: text, reference: referenceImage) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .padding(8)
+            } else {
+                SelectableTextView(text: text)
+                    .frame(minWidth: 160, maxHeight: .infinity)
+            }
+        }
+        .frame(minWidth: 160)
+    }
+
+    /// 把译文文本渲染为 NSImage（透明底，白字，行距按文本分行）
+    private static func renderTextAsImage(text: String, reference: NSImage?) -> NSImage? {
+        guard !text.isEmpty else { return nil }
+        let lines = text.components(separatedBy: "\n").filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return nil }
+
+        let font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+        ]
+
+        // 参考图尺寸（若可用），否则按行数估算
+        let width: CGFloat = reference.map { $0.size.width } ?? max(320, lines.map {
+            (($0 as NSString).size(withAttributes: attributes).width)
+        }.max() ?? 320)
+        let lineHeight = font.pointSize * 1.5
+        let height = max(120, CGFloat(lines.count) * lineHeight + 24)
+
+        let image = NSImage(size: NSSize(width: width, height: height))
+        image.lockFocus()
+        NSColor.clear.set()
+        NSRect(x: 0, y: 0, width: width, height: height).fill()
+
+        var y = height - 18
+        for line in lines {
+            (line as NSString).draw(
+                at: NSPoint(x: 14, y: y),
+                withAttributes: attributes
+            )
+            y -= lineHeight
+        }
+        image.unlockFocus()
+        return image
     }
 
     // MARK: - 状态栏
