@@ -257,7 +257,7 @@ struct ResultPanelView: View {
                     text: model.translatedText,
                     onSelectionChange: { model.selectedText = $0 },
                     onCollect: onCollect,
-                    paragraphSpacing: 0,
+                    paragraphSpacing: 4,
                     lineSpacing: 2
                 )
                 .frame(minWidth: 160)
@@ -312,6 +312,7 @@ struct ResultPanelView: View {
                     .scaledToFit()
                     .scaleEffect(imageScale)
                     .frame(width: max(1, (geo.size.width - 16) * imageScale))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .padding(8)
                     .gesture(
                         MagnificationGesture()
@@ -420,6 +421,7 @@ struct ResultPanelView: View {
                         .interpolation(.high)
                         .scaledToFit()
                         .frame(width: max(1, geo.size.width - 16))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .padding(8)
                 } else {
                     // 无 OCR 位置信息时兜底：直接显示原图
@@ -428,6 +430,7 @@ struct ResultPanelView: View {
                         .interpolation(.high)
                         .scaledToFit()
                         .frame(width: max(1, geo.size.width - 16))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .padding(8)
                 }
             }
@@ -484,6 +487,7 @@ struct ResultPanelView: View {
 
     /// 渲染译文覆盖图：在原图上绘制译文，每行译文覆盖在对应 OCR 行位置
     /// 与 renderPositionedTextImage 的区别：背景使用原图（不透明），译文覆盖在文字上
+    /// 自动调整字号以避免译文超出 OCR 行边界被裁切
     private static func renderPositionedCoverImage(
         image: NSImage,
         translation: String,
@@ -508,14 +512,8 @@ struct ResultPanelView: View {
         // 先绘制原图作为背景
         image.draw(in: NSRect(x: 0, y: 0, width: imgW, height: imgH))
 
-        let font = NSFont.systemFont(ofSize: 14, weight: .medium)
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineBreakMode = .byWordWrapping
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor.labelColor,
-            .paragraphStyle: paragraphStyle,
-        ]
 
         // 逐个绘制：先盖掉原文区域，再绘制译文
         let count = min(translatedLines.count, sortedLines.count)
@@ -531,19 +529,43 @@ struct ResultPanelView: View {
                 height: box.size.height * imgH
             )
 
-            // 先覆盖原文（用窗口背景色填充，避免原文残留）
-            let coverRect = rect.insetBy(dx: -2, dy: -2)
+            // 先覆盖原文（用窗口背景色填充，避免原文残留），覆盖区上下延伸以容纳可能换行的译文
+            let coverRect = rect.insetBy(dx: -2, dy: -6)
             NSColor.windowBackgroundColor.setFill()
             NSBezierPath(rect: coverRect).fill()
 
             // 在对应位置绘制译文（略微内缩避免溢出）
             let drawRect = rect.insetBy(dx: 2, dy: 2)
-            if drawRect.width > 8, drawRect.height > 4 {
-                (translatedLine as NSString).draw(
-                    in: drawRect,
-                    withAttributes: attributes
-                )
+            guard drawRect.width > 8, drawRect.height > 4, !translatedLine.isEmpty else { continue }
+
+            // 自动缩放字号：译文文本过长时缩小字号，确保完整显示不被裁切
+            var fontSize: CGFloat = 14
+            let minFontSize: CGFloat = 8
+            var fittedFont = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+
+            while fontSize > minFontSize {
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: fittedFont,
+                    .paragraphStyle: paragraphStyle,
+                ]
+                let textSize = (translatedLine as NSString).size(withAttributes: attrs)
+                if textSize.width <= drawRect.width {
+                    break
+                }
+                fontSize -= 0.5
+                fittedFont = NSFont.systemFont(ofSize: fontSize, weight: .medium)
             }
+
+            // 使用最终字号绘制译文，超出宽度的部分自动换行
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: fittedFont,
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: paragraphStyle,
+            ]
+            (translatedLine as NSString).draw(
+                in: drawRect,
+                withAttributes: attrs
+            )
         }
 
         canvas.unlockFocus()
