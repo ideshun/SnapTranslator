@@ -289,12 +289,15 @@ struct ResultPanelView: View {
                     .scaleEffect(imageScale)
                     .frame(width: max(1, geo.size.width * imageScale))
                     .padding(8)
-            }
-            .onMagnificationGesture { value in
-                imageScale = max(0.2, min(5.0, imageScale * value))
-            }
-            .onTapGesture(count: 2) {
-                imageScale = 1.0
+                    .gesture(
+                        MagnificationGesture()
+                            .onChanged { value in
+                                imageScale = max(0.2, min(5.0, imageScale * value))
+                            }
+                    )
+                    .onTapGesture(count: 2) {
+                        imageScale = 1.0
+                    }
             }
             .overlay(alignment: .bottomTrailing) {
                 HStack(spacing: 6) {
