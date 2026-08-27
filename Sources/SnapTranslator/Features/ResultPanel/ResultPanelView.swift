@@ -257,7 +257,7 @@ struct ResultPanelView: View {
                     text: model.translatedText,
                     onSelectionChange: { model.selectedText = $0 },
                     onCollect: onCollect,
-                    paragraphSpacing: 4,
+                    paragraphSpacing: 2,
                     lineSpacing: 2
                 )
                 .frame(minWidth: 160)
@@ -274,7 +274,7 @@ struct ResultPanelView: View {
                     text: model.translatedText,
                     onSelectionChange: { model.selectedText = $0 },
                     onCollect: onCollect,
-                    paragraphSpacing: 4,
+                    paragraphSpacing: 2,
                     lineSpacing: 2
                 )
                 .frame(minWidth: 160)
@@ -304,66 +304,11 @@ struct ResultPanelView: View {
 
     @ViewBuilder
     private func zoomableImagePane(image: NSImage) -> some View {
-        GeometryReader { geo in
-            ScrollView([.vertical, .horizontal]) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFit()
-                        .scaleEffect(imageScale)
-                        .frame(width: max(1, (geo.size.width - 16) * imageScale))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .padding(8)
-                        .gesture(
-                            MagnificationGesture()
-                                .onChanged { value in
-                                    imageScale = max(0.2, min(5.0, imageScale * value))
-                                }
-                        )
-                        .onTapGesture(count: 2) {
-                            imageScale = 1.0
-                        }
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }
+        InteractiveImageView(image: image, scale: $imageScale)
             .overlay(alignment: .bottomTrailing) {
-                HStack(spacing: 6) {
-                    Button {
-                        imageScale = max(0.2, imageScale / 1.25)
-                    } label: {
-                        Image(systemName: "minus.magnifyingglass")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("缩小")
-
-                    Button {
-                        imageScale = max(0.2, imageScale * 1.25)
-                    } label: {
-                        Image(systemName: "plus.magnifyingglass")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("放大")
-
-                    Button {
-                        imageScale = 1.0
-                    } label: {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("重置缩放")
-                }
-                .padding(6)
-                .background(Color.black.opacity(0.5))
-                .clipShape(Capsule())
-                .padding(8)
+                zoomControlBar
             }
-        }
-        .frame(minWidth: 160)
+            .frame(minWidth: 160)
     }
 
     /// 译文图片窗格：按 OCR 位置把译文排版为图片，与左栏原图对应
@@ -413,73 +358,60 @@ struct ResultPanelView: View {
         translation: String,
         ocrLines: [(text: String, rect: CGRect)]
     ) -> some View {
-        GeometryReader { geo in
-            ScrollView([.vertical, .horizontal]) {
-                VStack(alignment: .leading, spacing: 0) {
-                    if let coveredImage = Self.renderPositionedCoverImage(
-                        image: image,
-                        translation: translation,
-                        ocrLines: ocrLines
-                    ) {
-                        Image(nsImage: coveredImage)
-                            .resizable()
-                            .interpolation(.high)
-                            .scaledToFit()
-                            .scaleEffect(imageScale)
-                            .frame(width: max(1, (geo.size.width - 16) * imageScale))
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                            .padding(8)
-                    } else {
-                        // 无 OCR 位置信息时兜底：直接显示原图
-                        Image(nsImage: image)
-                            .resizable()
-                            .interpolation(.high)
-                            .scaledToFit()
-                            .scaleEffect(imageScale)
-                            .frame(width: max(1, (geo.size.width - 16) * imageScale))
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                            .padding(8)
-                    }
-                    Spacer(minLength: 0)
+        if let coveredImage = Self.renderPositionedCoverImage(
+            image: image,
+            translation: translation,
+            ocrLines: ocrLines
+        ) {
+            InteractiveImageView(image: coveredImage, scale: $imageScale)
+                .overlay(alignment: .bottomTrailing) {
+                    zoomControlBar
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                HStack(spacing: 6) {
-                    Button {
-                        imageScale = max(0.2, imageScale / 1.25)
-                    } label: {
-                        Image(systemName: "minus.magnifyingglass")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("缩小")
-
-                    Button {
-                        imageScale = max(0.2, imageScale * 1.25)
-                    } label: {
-                        Image(systemName: "plus.magnifyingglass")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("放大")
-
-                    Button {
-                        imageScale = 1.0
-                    } label: {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.borderless)
-                    .help("重置缩放")
+                .frame(minWidth: 160)
+        } else {
+            // 无 OCR 位置信息时兜底：直接显示原图
+            InteractiveImageView(image: image, scale: $imageScale)
+                .overlay(alignment: .bottomTrailing) {
+                    zoomControlBar
                 }
-                .padding(6)
-                .background(Color.black.opacity(0.5))
-                .clipShape(Capsule())
-                .padding(8)
-            }
+                .frame(minWidth: 160)
         }
-        .frame(minWidth: 160)
+    }
+
+    /// 缩放控制按钮组（共用）
+    private var zoomControlBar: some View {
+        HStack(spacing: 6) {
+            Button {
+                imageScale = max(0.2, imageScale / 1.25)
+            } label: {
+                Image(systemName: "minus.magnifyingglass")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.borderless)
+            .help("缩小")
+
+            Button {
+                imageScale = max(0.2, imageScale * 1.25)
+            } label: {
+                Image(systemName: "plus.magnifyingglass")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.borderless)
+            .help("放大")
+
+            Button {
+                imageScale = 1.0
+            } label: {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.borderless)
+            .help("重置缩放")
+        }
+        .padding(6)
+        .background(Color.black.opacity(0.5))
+        .clipShape(Capsule())
+        .padding(8)
     }
 
     // MARK: - 图片渲染
