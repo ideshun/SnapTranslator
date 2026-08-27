@@ -306,23 +306,27 @@ struct ResultPanelView: View {
     private func zoomableImagePane(image: NSImage) -> some View {
         GeometryReader { geo in
             ScrollView([.vertical, .horizontal]) {
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .scaleEffect(imageScale)
-                    .frame(width: max(1, (geo.size.width - 16) * imageScale))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(8)
-                    .gesture(
-                        MagnificationGesture()
-                            .onChanged { value in
-                                imageScale = max(0.2, min(5.0, imageScale * value))
-                            }
-                    )
-                    .onTapGesture(count: 2) {
-                        imageScale = 1.0
-                    }
+                VStack(alignment: .leading, spacing: 0) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .scaleEffect(imageScale)
+                        .frame(width: max(1, (geo.size.width - 16) * imageScale))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(8)
+                        .gesture(
+                            MagnificationGesture()
+                                .onChanged { value in
+                                    imageScale = max(0.2, min(5.0, imageScale * value))
+                                }
+                        )
+                        .onTapGesture(count: 2) {
+                            imageScale = 1.0
+                        }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
             .overlay(alignment: .bottomTrailing) {
                 HStack(spacing: 6) {
@@ -411,37 +415,68 @@ struct ResultPanelView: View {
     ) -> some View {
         GeometryReader { geo in
             ScrollView([.vertical, .horizontal]) {
-                if let coveredImage = Self.renderPositionedCoverImage(
-                    image: image,
-                    translation: translation,
-                    ocrLines: ocrLines
-                ) {
-                    Image(nsImage: coveredImage)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFit()
-                        .frame(width: max(1, geo.size.width - 16))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .padding(8)
-                } else {
-                    // 无 OCR 位置信息时兜底：直接显示原图
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFit()
-                        .frame(width: max(1, geo.size.width - 16))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .padding(8)
+                VStack(alignment: .leading, spacing: 0) {
+                    if let coveredImage = Self.renderPositionedCoverImage(
+                        image: image,
+                        translation: translation,
+                        ocrLines: ocrLines
+                    ) {
+                        Image(nsImage: coveredImage)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .scaleEffect(imageScale)
+                            .frame(width: max(1, (geo.size.width - 16) * imageScale))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .padding(8)
+                    } else {
+                        // 无 OCR 位置信息时兜底：直接显示原图
+                        Image(nsImage: image)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .scaleEffect(imageScale)
+                            .frame(width: max(1, (geo.size.width - 16) * imageScale))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .padding(8)
+                    }
+                    Spacer(minLength: 0)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
             .overlay(alignment: .bottomTrailing) {
-                Text("1:1 译文覆盖源图")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .padding(6)
-                    .background(Color.black.opacity(0.5))
-                    .clipShape(Capsule())
-                    .padding(8)
+                HStack(spacing: 6) {
+                    Button {
+                        imageScale = max(0.2, imageScale / 1.25)
+                    } label: {
+                        Image(systemName: "minus.magnifyingglass")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("缩小")
+
+                    Button {
+                        imageScale = max(0.2, imageScale * 1.25)
+                    } label: {
+                        Image(systemName: "plus.magnifyingglass")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("放大")
+
+                    Button {
+                        imageScale = 1.0
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("重置缩放")
+                }
+                .padding(6)
+                .background(Color.black.opacity(0.5))
+                .clipShape(Capsule())
+                .padding(8)
             }
         }
         .frame(minWidth: 160)
@@ -487,7 +522,7 @@ struct ResultPanelView: View {
 
     /// 渲染译文覆盖图：在原图上绘制译文，每行译文覆盖在对应 OCR 行位置
     /// 与 renderPositionedTextImage 的区别：背景使用原图（不透明），译文覆盖在文字上
-    /// 自动调整字号以避免译文超出 OCR 行边界被裁切
+    /// 按换行后实际高度动态调整字号与覆盖区，确保译文完整显示不被裁切
     private static func renderPositionedCoverImage(
         image: NSImage,
         translation: String,
@@ -515,11 +550,26 @@ struct ResultPanelView: View {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineBreakMode = .byWordWrapping
 
-        // 逐个绘制：先盖掉原文区域，再绘制译文
-        let count = min(translatedLines.count, sortedLines.count)
+        // 译文行数可能多于 OCR 行：多余行在最后一行下方按序排列
+        let count = translatedLines.count
         for i in 0..<count {
             let translatedLine = translatedLines[i]
-            let box = sortedLines[i].rect
+            guard !translatedLine.isEmpty else { continue }
+
+            // 确定该译文行对应的 OCR 区域（超出部分使用最后一行，向下排列）
+            let box: CGRect
+            if i < sortedLines.count {
+                box = sortedLines[i].rect
+            } else {
+                let lastBox = sortedLines[sortedLines.count - 1].rect
+                let overflowIndex = i - sortedLines.count + 1
+                box = CGRect(
+                    x: lastBox.origin.x,
+                    y: max(0, lastBox.origin.y - lastBox.size.height * CGFloat(overflowIndex)),
+                    width: lastBox.size.width,
+                    height: lastBox.size.height
+                )
+            }
 
             // Vision 归一化坐标（原点左下）→ 像素坐标（AppKit 同样原点左下）
             let rect = CGRect(
@@ -528,35 +578,58 @@ struct ResultPanelView: View {
                 width: box.size.width * imgW,
                 height: box.size.height * imgH
             )
+            guard rect.width > 8, rect.height > 2 else { continue }
 
-            // 先覆盖原文（用窗口背景色填充，避免原文残留），覆盖区上下延伸以容纳可能换行的译文
-            let coverRect = rect.insetBy(dx: -2, dy: -6)
-            NSColor.windowBackgroundColor.setFill()
-            NSBezierPath(rect: coverRect).fill()
+            // 可用绘制宽度（内缩避免贴边）
+            let availWidth = max(rect.width - 4, 8)
+            // 垂直可用空间：OCR 行高的数倍，给译文换行留足空间，避免裁切
+            let maxTextHeight = max(rect.height * 3, 36)
 
-            // 在对应位置绘制译文（略微内缩避免溢出）
-            let drawRect = rect.insetBy(dx: 2, dy: 2)
-            guard drawRect.width > 8, drawRect.height > 4, !translatedLine.isEmpty else { continue }
-
-            // 自动缩放字号：译文文本过长时缩小字号，确保完整显示不被裁切
+            // 根据换行后实际高度动态调整字号，确保完整显示
             var fontSize: CGFloat = 14
             let minFontSize: CGFloat = 8
             var fittedFont = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+            var fittedHeight = rect.height
 
             while fontSize > minFontSize {
                 let attrs: [NSAttributedString.Key: Any] = [
                     .font: fittedFont,
                     .paragraphStyle: paragraphStyle,
                 ]
-                let textSize = (translatedLine as NSString).size(withAttributes: attrs)
-                if textSize.width <= drawRect.width {
+                let constrained = CGSize(width: availWidth, height: .greatestFiniteMagnitude)
+                let measured = (translatedLine as NSString).boundingRect(
+                    with: constrained,
+                    options: [.usesLineFragmentOrigin, .usesFontLeading],
+                    attributes: attrs
+                )
+                if measured.height <= maxTextHeight {
+                    fittedHeight = measured.height
                     break
                 }
                 fontSize -= 0.5
                 fittedFont = NSFont.systemFont(ofSize: fontSize, weight: .medium)
             }
 
-            // 使用最终字号绘制译文，超出宽度的部分自动换行
+            // 覆盖区向上扩展以容纳换行后的完整译文（clamp 到画布内避免越界裁切）
+            let coverHeight = max(rect.height + 6, fittedHeight + 6)
+            let coverRect = CGRect(
+                x: max(0, rect.origin.x - 3),
+                y: max(0, rect.origin.y - 3),
+                width: min(imgW, rect.width + 6),
+                height: min(imgH, coverHeight)
+            )
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(rect: coverRect).fill()
+
+            // 译文绘制区：从覆盖区顶部向下对齐，确保多行完整显示
+            let drawHeight = max(fittedHeight, rect.height - 4)
+            let drawTop = coverRect.maxY
+            let drawRect = CGRect(
+                x: max(0, rect.origin.x + 2),
+                y: max(0, drawTop - drawHeight),
+                width: availWidth,
+                height: min(drawHeight, imgH)
+            )
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: fittedFont,
                 .foregroundColor: NSColor.labelColor,
