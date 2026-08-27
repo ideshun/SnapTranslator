@@ -5,6 +5,8 @@ struct OCRLine: Identifiable {
     let id = UUID()
     let text: String
     let confidence: Float
+    /// 归一化坐标（原点在左下角，Vision 坐标系）
+    let boundingBox: CGRect
 }
 
 struct OCRResult {
@@ -47,7 +49,11 @@ final class VisionOCRService {
                 let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
                 let lines = observations.compactMap { observation -> OCRLine? in
                     guard let candidate = observation.topCandidates(1).first else { return nil }
-                    return OCRLine(text: candidate.string, confidence: candidate.confidence)
+                    return OCRLine(
+                        text: candidate.string,
+                        confidence: candidate.confidence,
+                        boundingBox: observation.boundingBox
+                    )
                 }
                 continuation.resume(returning: OCRResult(lines: lines))
             }

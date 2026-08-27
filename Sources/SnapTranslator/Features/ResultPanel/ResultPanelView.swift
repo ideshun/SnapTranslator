@@ -123,7 +123,11 @@ struct ResultPanelView: View {
 
         case .translating:
             VStack(spacing: 0) {
-                SelectableTextView(text: model.sourceText)
+                SelectableTextView(
+                    text: model.sourceText,
+                    paragraphSpacing: 4,
+                    lineSpacing: 2
+                )
                 Divider()
                 HStack(spacing: 8) {
                     ProgressView()
@@ -174,6 +178,7 @@ struct ResultPanelView: View {
                             model.sourceLanguage = entry.sourceLanguage
                             model.targetLanguage = entry.targetLanguage
                             model.providerName = entry.providerName
+                            model.ocrLines = []
                             model.phase = .done
                             model.tab = .sideBySide
                         } label: {
@@ -213,19 +218,21 @@ struct ResultPanelView: View {
     private var doneContent: some View {
         switch model.tab {
         case .recognize:
-            // 识别结果：左侧大图 + 右侧原文/失败信息
+            // 识别：左侧大图 + 右侧原文
             HSplitView {
                 // 左栏：截图原图（自动适配宽度，支持缩放）
                 if let image = model.image {
                     zoomableImagePane(image: image)
                 }
-                // 右栏：原文/识别结果
+                // 右栏：原文/识别结果（带分段效果）
                 VStack(alignment: .leading, spacing: 8) {
                     if !model.sourceText.isEmpty {
                         SelectableTextView(
                             text: model.sourceText,
                             onSelectionChange: { model.selectedText = $0 },
-                            onCollect: onCollect
+                            onCollect: onCollect,
+                            paragraphSpacing: 4,
+                            lineSpacing: 2
                         )
                     } else {
                         Text("未识别到文字")
@@ -238,14 +245,20 @@ struct ResultPanelView: View {
             }
 
         case .translation:
-            // 翻译：左侧原文 + 右侧译文（支持划词选中）
+            // 翻译：左侧原文 + 右侧译文（都带分段效果）
             HSplitView {
-                SelectableTextView(text: model.sourceText)
-                    .frame(minWidth: 160)
+                SelectableTextView(
+                    text: model.sourceText,
+                    paragraphSpacing: 4,
+                    lineSpacing: 2
+                )
+                .frame(minWidth: 160)
                 SelectableTextView(
                     text: model.translatedText,
                     onSelectionChange: { model.selectedText = $0 },
-                    onCollect: onCollect
+                    onCollect: onCollect,
+                    paragraphSpacing: 4,
+                    lineSpacing: 2
                 )
                 .frame(minWidth: 160)
             }
@@ -256,19 +269,27 @@ struct ResultPanelView: View {
                 if let image = model.image {
                     zoomableImagePane(image: image)
                 }
-                // 右栏：译文以图片形式渲染（保留原文版式观感）
-                translatedImagePane(
+                // 右栏：译文以图片形式渲染（使用 OCR 位置定位，与左图对应）
+                positionedTranslatedImagePane(
                     text: model.translatedText,
-                    referenceImage: model.image
+                    referenceImage: model.image,
+                    ocrLines: model.ocrLines
                 )
             }
 
         case .oneToOne:
-            // 1:1 模式：翻译结果以图片形式覆盖/替换源语言
-            if let image = model.image, !model.translatedText.isEmpty {
-                oneToOneView(image: image, translation: model.translatedText)
-            } else if let image = model.image {
-                zoomableImagePane(image: image)
+            // 1:1 模式：左右对照，左边截图，右边翻译覆盖结果（按 OCR 位置对应）
+            HSplitView {
+                // 左栏：截图原图
+                if let image = model.image {
+                    zoomableImagePane(image: image)
+                }
+                // 右栏：翻译覆盖结果
+                if let image = model.image, !model.translatedText.isEmpty {
+                    oneToOneView(image: image, translation: model.translatedText, ocrLines: model.ocrLines)
+                } else if let image = model.image {
+                    zoomableImagePane(image: image)
+                }
             }
         }
     }
@@ -337,11 +358,28 @@ struct ResultPanelView: View {
         .frame(minWidth: 160)
     }
 
-    /// 译文图片窗格：按参考图尺寸把译文排版为图片，与左栏原图等比对照
+    /// 译文图片窗格：按 OCR 位置把译文排版为图片，与左栏原图对应
     @ViewBuilder
-    private func translatedImagePane(text: String, referenceImage: NSImage?) -> some View {
+    private func positionedTranslatedImagePane(
+        text: String,
+        referenceImage: NSImage?,
+        ocrLines: [(text: String, rect: CGRect)]
+    ) -> some View {
         ScrollView([.vertical, .horizontal]) {
-            if let image = Self.renderTextAsImage(text: text, reference: referenceImage) {
+            if let referenceImage,
+               let image = Self.renderPositionedTextImage(
+                   text: text,
+                   reference: referenceImage,
+                   ocrLines: ocrLines
+               ) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .padding(8)
+            } else if let image = Self.renderTextAsImage(text: text, reference: referenceImage) {
+                // 无 OCR 位置信息时的兜底：普通排版渲染
                 Image(nsImage: image)
                     .resizable()
                     .interpolation(.high)
@@ -349,38 +387,46 @@ struct ResultPanelView: View {
                     .frame(maxWidth: .infinity)
                     .padding(8)
             } else {
-                SelectableTextView(text: text)
-                    .frame(minWidth: 160, maxHeight: .infinity)
+                SelectableTextView(
+                    text: text,
+                    paragraphSpacing: 4,
+                    lineSpacing: 2
+                )
+                .frame(minWidth: 160, maxHeight: .infinity)
             }
         }
         .frame(minWidth: 160)
     }
 
-    /// 1:1 模式：翻译结果以图片形式覆盖在原文上方（等尺寸替换）
+    /// 1:1 模式：翻译结果以图片形式覆盖原图，按 OCR 位置对应
     @ViewBuilder
-    private func oneToOneView(image: NSImage, translation: String) -> some View {
+    private func oneToOneView(
+        image: NSImage,
+        translation: String,
+        ocrLines: [(text: String, rect: CGRect)]
+    ) -> some View {
         GeometryReader { geo in
             ScrollView([.vertical, .horizontal]) {
-                ZStack {
-                    // 背景原图（半透明叠加参考）
+                if let coveredImage = Self.renderPositionedCoverImage(
+                    image: image,
+                    translation: translation,
+                    ocrLines: ocrLines
+                ) {
+                    Image(nsImage: coveredImage)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .padding(8)
+                } else {
+                    // 无 OCR 位置信息时兜底：直接显示原图
                     Image(nsImage: image)
                         .resizable()
                         .interpolation(.high)
                         .scaledToFit()
-                        .opacity(0.15)
-
-                    // 前景译文图片（等尺寸覆盖）
-                    if let translatedImage = Self.renderTextAsImage(
-                        text: translation,
-                        reference: image
-                    ) {
-                        Image(nsImage: translatedImage)
-                            .resizable()
-                            .interpolation(.high)
-                            .scaledToFit()
-                    }
+                        .frame(maxWidth: .infinity)
+                        .padding(8)
                 }
-                .padding(8)
             }
             .overlay(alignment: .bottomTrailing) {
                 Text("1:1 译文覆盖源图")
@@ -394,6 +440,8 @@ struct ResultPanelView: View {
         }
         .frame(minWidth: 160)
     }
+
+    // MARK: - 图片渲染
 
     /// 把译文文本渲染为 NSImage（透明底，白字，行距按文本分行）
     private static func renderTextAsImage(text: String, reference: NSImage?) -> NSImage? {
@@ -429,6 +477,131 @@ struct ResultPanelView: View {
         }
         image.unlockFocus()
         return image
+    }
+
+    /// 渲染译文覆盖图：在原图上绘制译文，每行译文覆盖在对应 OCR 行位置
+    /// 与 renderPositionedTextImage 的区别：背景使用原图（不透明），译文覆盖在文字上
+    private static func renderPositionedCoverImage(
+        image: NSImage,
+        translation: String,
+        ocrLines: [(text: String, rect: CGRect)]
+    ) -> NSImage? {
+        guard !translation.isEmpty, !ocrLines.isEmpty else { return nil }
+
+        let translatedLines = translation.components(separatedBy: "\n").filter { !$0.isEmpty }
+        guard !translatedLines.isEmpty else { return nil }
+
+        // 将 OCR 行按从上到下排序（Vision 归一化坐标：y 轴从底部向上）
+        let sortedLines = ocrLines.sorted { $0.rect.midY > $1.rect.midY }
+
+        let imgW = image.size.width
+        let imgH = image.size.height
+        guard imgW > 0, imgH > 0 else { return nil }
+
+        // 创建与参考图同尺寸的画布
+        let canvas = NSImage(size: image.size)
+        canvas.lockFocus()
+
+        // 先绘制原图作为背景
+        image.draw(in: NSRect(x: 0, y: 0, width: imgW, height: imgH))
+
+        let font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraphStyle,
+        ]
+
+        // 逐个绘制：先盖掉原文区域，再绘制译文
+        let count = min(translatedLines.count, sortedLines.count)
+        for i in 0..<count {
+            let translatedLine = translatedLines[i]
+            let box = sortedLines[i].rect
+
+            // Vision 归一化坐标（原点左下）→ 像素坐标（AppKit 同样原点左下）
+            let rect = CGRect(
+                x: box.origin.x * imgW,
+                y: box.origin.y * imgH,
+                width: box.size.width * imgW,
+                height: box.size.height * imgH
+            )
+
+            // 先覆盖原文（用窗口背景色填充，避免原文残留）
+            let coverRect = rect.insetBy(dx: -2, dy: -2)
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(rect: coverRect).fill()
+
+            // 在对应位置绘制译文（略微内缩避免溢出）
+            let drawRect = rect.insetBy(dx: 2, dy: 2)
+            if drawRect.width > 8, drawRect.height > 4 {
+                (translatedLine as NSString).draw(
+                    in: drawRect,
+                    withAttributes: attributes
+                )
+            }
+        }
+
+        canvas.unlockFocus()
+        return canvas
+    }
+
+    /// 按 OCR boundingBox 位置渲染译文图片：译文每行放置在对应的原文字位置
+    /// - 参考图尺寸创建画布，每行译文绘制在原图对应 OCR 行的 boundingBox 区域内
+    private static func renderPositionedTextImage(
+        text: String,
+        reference: NSImage,
+        ocrLines: [(text: String, rect: CGRect)]
+    ) -> NSImage? {
+        guard !text.isEmpty, !ocrLines.isEmpty else { return nil }
+
+        let translatedLines = text.components(separatedBy: "\n").filter { !$0.isEmpty }
+        guard !translatedLines.isEmpty else { return nil }
+
+        // 将 OCR 行按从上到下排序（Vision 归一化坐标：y 轴从底部向上）
+        let sortedLines = ocrLines.sorted { $0.rect.midY > $1.rect.midY }
+
+        let imgW = reference.size.width
+        let imgH = reference.size.height
+        guard imgW > 0, imgH > 0 else { return nil }
+
+        // 创建与参考图同尺寸的画布
+        let canvas = NSImage(size: reference.size)
+        canvas.lockFocus()
+        NSColor.clear.set()
+        NSRect(x: 0, y: 0, width: imgW, height: imgH).fill()
+
+        let font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+        ]
+
+        // 逐个绘制：译文行对应 OCR 行的位置
+        let count = min(translatedLines.count, sortedLines.count)
+        for i in 0..<count {
+            let translatedLine = translatedLines[i]
+            let box = sortedLines[i].rect
+
+            // Vision 归一化坐标（原点左下）→ 像素坐标（AppKit 同样原点左下）
+            let rect = CGRect(
+                x: box.origin.x * imgW,
+                y: box.origin.y * imgH,
+                width: box.size.width * imgW,
+                height: box.size.height * imgH
+            )
+
+            // 在对应位置绘制译文
+            let drawRect = rect.insetBy(dx: 2, dy: 2)
+            (translatedLine as NSString).draw(
+                in: drawRect,
+                withAttributes: attributes
+            )
+        }
+
+        canvas.unlockFocus()
+        return canvas
     }
 
     // MARK: - 状态栏

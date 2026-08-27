@@ -17,8 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var settingsSubscription: AnyCancellable?
 
-    /// 重试所需的最近一次请求
-    private var lastRequest: (image: NSImage, sourceText: String)?
+    /// 重试所需的最近一次请求（含 OCR 行位置，用于翻译覆盖定位）
+    private var lastRequest: (image: NSImage, sourceText: String, ocrLines: [(text: String, rect: CGRect)])?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         wordBook = WordBookStore()
@@ -497,7 +497,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 核心流程
 
     private func handleCaptured(image: NSImage, rect: CGRect) {
-        lastRequest = (image, "")
+        lastRequest = (image, "", [])
         let model = panelController.model
         model.begin(image: image, target: settings.targetLanguage)
         panelController.show(near: rect)
@@ -512,8 +512,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     model.failed("未识别到文字，请调整区域后重试")
                     return
                 }
-                model.recognized(text: result.fullText)
-                self.lastRequest = (image, result.fullText)
+                let ocrLines = result.lines.map { (text: $0.text, rect: $0.boundingBox) }
+                model.recognized(text: result.fullText, lines: ocrLines)
+                self.lastRequest = (image, result.fullText, ocrLines)
                 self.translate(text: result.fullText, image: image, model: model)
             } catch {
                 model.failed("OCR 失败：\(error.localizedDescription)")
@@ -545,7 +546,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let model = panelController.model
-        model.recognized(text: last.sourceText)
+        model.recognized(text: last.sourceText, lines: last.ocrLines)
         panelController.show(near: nil)
         translate(text: last.sourceText, image: last.image, model: model)
     }
