@@ -10,6 +10,8 @@ struct SelectableTextView: NSViewRepresentable {
     var paragraphSpacing: CGFloat = 0
     /// 行间距倍数，默认 0（由系统决定）
     var lineSpacing: CGFloat = 0
+    /// 是否压缩多余空行（默认开启，将连续多个换行折叠为单个换行）
+    var collapseBlankLines: Bool = true
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = CollectableTextView()
@@ -31,11 +33,22 @@ struct SelectableTextView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? CollectableTextView else { return }
-        if textView.string != text {
+        if textView.string != displayText {
             applyStyleAndText(to: textView)
         }
         textView.onSelectionChange = onSelectionChange
         textView.onCollect = onCollect
+    }
+
+    /// 展示文本：按需折叠多余空行，避免 AI 返回的空行导致视觉间距过大
+    private var displayText: String {
+        guard collapseBlankLines else { return text }
+        // 将 2 个以上连续换行折叠为单个换行
+        return text.replacingOccurrences(
+            of: "\\n{2,}",
+            with: "\n",
+            options: .regularExpression
+        )
     }
 
     /// 应用字体、段落间距并设置文本（使用 attributed string 确保样式生效）
@@ -52,7 +65,7 @@ struct SelectableTextView: NSViewRepresentable {
             attrs[.paragraphStyle] = paragraphStyle
         }
 
-        let attributed = NSAttributedString(string: text, attributes: attrs)
+        let attributed = NSAttributedString(string: displayText, attributes: attrs)
         textView.textStorage?.setAttributedString(attributed)
         // 同步 typingAttributes，确保后续编辑/选区也使用相同的样式
         textView.typingAttributes = attrs
