@@ -37,11 +37,11 @@ struct ResultPanelView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .frame(width: 280)
+            .frame(width: 240)
             .disabled(model.phase != .done)
             .labelsHidden()
 
-            Spacer(minLength: 8)
+            Spacer()
 
             if model.phase == .done {
                 // 翻译结果支持划词选中
@@ -94,7 +94,7 @@ struct ResultPanelView: View {
             }
             .help("关闭（窗口）")
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 8)
         .padding(.vertical, 8)
     }
 
@@ -257,7 +257,7 @@ struct ResultPanelView: View {
                     text: model.translatedText,
                     onSelectionChange: { model.selectedText = $0 },
                     onCollect: onCollect,
-                    paragraphSpacing: 4,
+                    paragraphSpacing: 0,
                     lineSpacing: 2
                 )
                 .frame(minWidth: 160)
@@ -269,12 +269,15 @@ struct ResultPanelView: View {
                 if let image = model.image {
                     zoomableImagePane(image: image)
                 }
-                // 右栏：译文以图片形式渲染（使用 OCR 位置定位，与左图对应）
-                positionedTranslatedImagePane(
+                // 右栏：译文以文本形式展示
+                SelectableTextView(
                     text: model.translatedText,
-                    referenceImage: model.image,
-                    ocrLines: model.ocrLines
+                    onSelectionChange: { model.selectedText = $0 },
+                    onCollect: onCollect,
+                    paragraphSpacing: 4,
+                    lineSpacing: 2
                 )
+                .frame(minWidth: 160)
             }
 
         case .oneToOne:
@@ -308,7 +311,7 @@ struct ResultPanelView: View {
                     .interpolation(.high)
                     .scaledToFit()
                     .scaleEffect(imageScale)
-                    .frame(width: max(1, geo.size.width * imageScale))
+                    .frame(width: max(1, (geo.size.width - 16) * imageScale))
                     .padding(8)
                     .gesture(
                         MagnificationGesture()
@@ -416,7 +419,7 @@ struct ResultPanelView: View {
                         .resizable()
                         .interpolation(.high)
                         .scaledToFit()
-                        .frame(maxWidth: .infinity)
+                        .frame(width: max(1, geo.size.width - 16))
                         .padding(8)
                 } else {
                     // 无 OCR 位置信息时兜底：直接显示原图
@@ -424,7 +427,7 @@ struct ResultPanelView: View {
                         .resizable()
                         .interpolation(.high)
                         .scaledToFit()
-                        .frame(maxWidth: .infinity)
+                        .frame(width: max(1, geo.size.width - 16))
                         .padding(8)
                 }
             }
