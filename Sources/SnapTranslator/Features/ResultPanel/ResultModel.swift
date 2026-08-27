@@ -13,7 +13,7 @@ final class ResultModel: ObservableObject {
     }
 
     enum Tab: String, CaseIterable, Identifiable {
-        case recognize = "识别结果"
+        case recognize = "识别"
         case translation = "翻译"
         case sideBySide = "对照"
         case oneToOne = "1:1"
@@ -33,6 +33,8 @@ final class ResultModel: ObservableObject {
     @Published var selectedText = ""
     /// 收藏成功后的短暂提示
     @Published var collectNotice = ""
+    /// OCR 识别到的每行文字及其在图像中的归一化位置（用于翻译覆盖定位）
+    @Published var ocrLines: [(text: String, rect: CGRect)] = []
 
     /// 识别历史记录
     @Published var history: [HistoryEntry] = []
@@ -64,9 +66,10 @@ final class ResultModel: ObservableObject {
         phase = .recognizing
     }
 
-    func recognized(text: String) {
+    func recognized(text: String, lines: [(text: String, rect: CGRect)] = []) {
         sourceText = text
         retrySourceText = text
+        ocrLines = lines
         phase = .translating
     }
 
@@ -105,5 +108,6 @@ final class ResultModel: ObservableObject {
         selectedText = ""
         collectNotice = ""
         retrySourceText = ""
+        ocrLines = []
     }
 }
