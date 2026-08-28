@@ -18,6 +18,8 @@ struct ResultPanelView: View {
     /// 切换源语言/目标语言
     var onSourceLanguageChange: ((Language?) -> Void)?
     var onTargetLanguageChange: ((Language) -> Void)?
+    /// 清空左侧内容
+    var onClear: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -853,6 +855,18 @@ struct ResultPanelView: View {
                 if !model.providerName.isEmpty {
                     Text("· \(model.providerName)").foregroundStyle(.secondary)
                 }
+
+                // 清空按钮：一键清空左侧内容
+                Button {
+                    onClear?()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("清空内容")
+                .disabled(!model.hasContent)
             } else {
                 Text("SnapTranslator")
             }

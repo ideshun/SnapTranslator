@@ -128,4 +128,9 @@ final class ResultModel: ObservableObject {
         retrySourceText = ""
         ocrLines = []
     }
+
+    /// 是否有内容（截图/原文/译文），用于判断首次启动 vs 截图识别后的窗口大小
+    var hasContent: Bool {
+        image != nil || !sourceText.isEmpty || !translatedText.isEmpty
+    }
 }

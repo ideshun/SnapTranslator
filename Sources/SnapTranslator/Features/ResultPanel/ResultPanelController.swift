@@ -42,9 +42,10 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
         if let panel {
             return panel
         }
-        let defaultSize = settings.defaultWindowSize.size
+        // 首次启动/无内容时使用小尺寸窗口；截图识别后才应用设置的默认大小
+        let initialSize = WindowSize.small.size
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height),
+            contentRect: NSRect(x: 0, y: 0, width: initialSize.width, height: initialSize.height),
             // 含 closable/miniaturizable 以支持远程桌面（VNC）右上角红绿灯关闭/最小化
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
@@ -58,12 +59,12 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
         panel.titleVisibility = .hidden
         panel.backgroundColor = .windowBackgroundColor
         panel.isReleasedWhenClosed = false
-        // 首次创建时居中显示
+        // 首次创建时居中显示（使用小尺寸）
         if let screen = NSScreen.main {
             let visible = screen.visibleFrame
             panel.setFrameOrigin(NSPoint(
-                x: visible.midX - defaultSize.width / 2,
-                y: visible.midY - defaultSize.height / 2
+                x: visible.midX - initialSize.width / 2,
+                y: visible.midY - initialSize.height / 2
             ))
         }
         // 关闭（右上角红绿灯/⌘W）时隐藏而非退出，保持菜单栏驻留
@@ -98,6 +99,9 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
                 },
                 onTargetLanguageChange: { [weak self] lang in
                     self?.onTargetLanguageChange?(lang)
+                },
+                onClear: { [weak self] in
+                    self?.handleClearContent()
                 }
             )
         )
@@ -106,26 +110,42 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
         return panel
     }
 
-    /// 显示面板：应用默认窗口大小，有选区时贴近选区展示
+    /// 显示面板：无内容时保持小尺寸；截图识别后有内容时应用设置窗口大小
     func show(near rect: CGRect?) {
         let panel = ensurePanel()
         panel.alphaValue = 1
-        // 每次显示都应用默认窗口大小（截图后自动调整为设置的大小）
-        applyDefaultWindowSize()
+        // 有内容（截图识别后）才应用设置的窗口大小；首次启动/清空后保持小尺寸
+        if model.hasContent {
+            applyDefaultWindowSize()
+        }
         if let rect {
             position(panel: panel, near: rect)
         }
         panel.makeKeyAndOrderFront(nil)
     }
 
-    /// 应用设置中的默认窗口大小
+    /// 应用设置中的默认窗口大小（仅在已有内容时生效，首次启动/清空后保持小尺寸）
     func applyDefaultWindowSize() {
-        guard let panel else { return }
+        guard let panel, model.hasContent else { return }
         let defaultSize = settings.defaultWindowSize.size
         let currentSize = panel.frame.size
         guard abs(currentSize.width - defaultSize.width) > 1
             || abs(currentSize.height - defaultSize.height) > 1 else { return }
         panel.setContentSize(defaultSize)
+    }
+
+    /// 清空左侧内容并恢复小尺寸窗口
+    func handleClearContent() {
+        // 停止正在进行的朗读
+        SpeechManager.shared.stop()
+        model.reset()
+        // 清空内容后恢复小尺寸窗口
+        guard let panel else { return }
+        let smallSize = WindowSize.small.size
+        if abs(panel.frame.size.width - smallSize.width) > 1
+            || abs(panel.frame.size.height - smallSize.height) > 1 {
+            panel.setContentSize(smallSize)
+        }
     }
 
     func hide() {
