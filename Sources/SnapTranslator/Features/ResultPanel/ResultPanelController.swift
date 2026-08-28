@@ -11,6 +11,8 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
     var onRetry: (() -> Void)?
     var onSwapLanguages: (() -> Void)?
     var onOpenWordBook: (() -> Void)?
+    /// 翻译页签左侧原文编辑后的实时翻译回调
+    var onLiveTranslate: ((String) -> Void)?
 
     private let settings: SettingsStore
     private var panel: NSPanel?
@@ -76,6 +78,9 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
                 },
                 onOpenWordBook: { [weak self] in
                     self?.onOpenWordBook?()
+                },
+                onLiveTranslate: { [weak self] text in
+                    self?.onLiveTranslate?(text)
                 }
             )
         )
