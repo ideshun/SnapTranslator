@@ -58,7 +58,14 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
         panel.titleVisibility = .hidden
         panel.backgroundColor = .windowBackgroundColor
         panel.isReleasedWhenClosed = false
-        panel.setFrameAutosaveName("ResultPanelFrame")
+        // 首次创建时居中显示
+        if let screen = NSScreen.main {
+            let visible = screen.visibleFrame
+            panel.setFrameOrigin(NSPoint(
+                x: visible.midX - defaultSize.width / 2,
+                y: visible.midY - defaultSize.height / 2
+            ))
+        }
         // 关闭（右上角红绿灯/⌘W）时隐藏而非退出，保持菜单栏驻留
         panel.delegate = self
         panel.contentView = NSHostingView(
@@ -99,14 +106,26 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
         return panel
     }
 
-    /// 显示面板：有选区时贴近选区展示
+    /// 显示面板：应用默认窗口大小，有选区时贴近选区展示
     func show(near rect: CGRect?) {
         let panel = ensurePanel()
         panel.alphaValue = 1
+        // 每次显示都应用默认窗口大小（截图后自动调整为设置的大小）
+        applyDefaultWindowSize()
         if let rect {
             position(panel: panel, near: rect)
         }
         panel.makeKeyAndOrderFront(nil)
+    }
+
+    /// 应用设置中的默认窗口大小
+    func applyDefaultWindowSize() {
+        guard let panel else { return }
+        let defaultSize = settings.defaultWindowSize.size
+        let currentSize = panel.frame.size
+        guard abs(currentSize.width - defaultSize.width) > 1
+            || abs(currentSize.height - defaultSize.height) > 1 else { return }
+        panel.setContentSize(defaultSize)
     }
 
     func hide() {

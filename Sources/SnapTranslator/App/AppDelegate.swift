@@ -39,11 +39,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wirePanelActions()
         applySettings()
 
-        // 首次启动展示结果面板（空闲态），让用户明确看到应用已就绪
-        if !UserDefaults.standard.bool(forKey: "st.hasLaunched") {
-            UserDefaults.standard.set(true, forKey: "st.hasLaunched")
-            panelController.show(near: nil)
-        }
+        // 每次启动都展示结果面板（默认聚焦「翻译」页签），支持输入内容实时翻译
+        UserDefaults.standard.set(true, forKey: "st.hasLaunched")
+        panelController.show(near: nil)
 
         settingsSubscription = settings.objectWillChange
             .debounce(for: .milliseconds(200), scheduler: RunLoop.main)
@@ -354,6 +352,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         panelController.applyPin(alwaysOnTop: settings.alwaysOnTop)
+        // 设置变化时同步应用默认窗口大小
+        panelController.applyDefaultWindowSize()
         statusItem?.menu = buildMenu()
 
         // 按历史设置限制历史条数
@@ -840,6 +840,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if wordBook.add(phrase: phrase, context: context, source: source, target: target) {
             model.collectNotice = "已收藏「\(String(phrase.prefix(10)))」"
             model.selectedText = ""
+            model.leftSelectedText = ""
             Task { [weak model] in
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
                 model?.collectNotice = ""
