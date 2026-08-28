@@ -12,6 +12,8 @@ struct ResultPanelView: View {
     let onTogglePin: () -> Void
     let onSwapLanguages: () -> Void
     let onOpenWordBook: () -> Void
+    /// 编辑翻译页签左侧原文后触发实时翻译
+    let onLiveTranslate: (String) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -94,7 +96,9 @@ struct ResultPanelView: View {
             }
             .help("关闭（窗口）")
         }
-        .padding(.horizontal, 8)
+        // 左端不额外留间距，让 tab 与右侧关闭按钮在同一水平条内对齐
+        .padding(.leading, 4)
+        .padding(.trailing, 8)
         .padding(.vertical, 8)
     }
 
@@ -245,19 +249,20 @@ struct ResultPanelView: View {
             }
 
         case .translation:
-            // 翻译：左侧原文 + 右侧译文（都带分段效果）
+            // 翻译：左侧原文支持编辑（实时翻译）+ 右侧译文（行距与左侧识别区一致）
             HSplitView {
-                SelectableTextView(
-                    text: model.sourceText,
+                EditableTextView(
+                    text: $model.sourceText,
                     paragraphSpacing: 4,
-                    lineSpacing: 2
+                    lineSpacing: 2,
+                    onChange: { onLiveTranslate($0) }
                 )
                 .frame(minWidth: 160)
                 SelectableTextView(
                     text: model.translatedText,
                     onSelectionChange: { model.selectedText = $0 },
                     onCollect: onCollect,
-                    paragraphSpacing: 2,
+                    paragraphSpacing: 4,
                     lineSpacing: 2
                 )
                 .frame(minWidth: 160)
@@ -269,12 +274,12 @@ struct ResultPanelView: View {
                 if let image = model.image {
                     zoomableImagePane(image: image)
                 }
-                // 右栏：译文以文本形式展示
+                // 右栏：译文以文本形式展示（行距与左侧识别区一致）
                 SelectableTextView(
                     text: model.translatedText,
                     onSelectionChange: { model.selectedText = $0 },
                     onCollect: onCollect,
-                    paragraphSpacing: 2,
+                    paragraphSpacing: 4,
                     lineSpacing: 2
                 )
                 .frame(minWidth: 160)
@@ -639,7 +644,30 @@ struct ResultPanelView: View {
     private var statusBar: some View {
         HStack(spacing: 8) {
             if model.phase == .done {
-                Text("\(model.sourceLanguage?.displayName ?? "自动") → \(model.targetLanguage.displayName) · \(model.providerName)")
+                // 左下角源语言/目标语言可点击，朗读对应文本
+                Button {
+                    SpeechManager.shared.speak(model.sourceText, language: model.sourceLanguage)
+                } label: {
+                    Text("\(model.sourceLanguage?.displayName ?? "自动")")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("朗读识别原文")
+                .disabled(model.sourceText.isEmpty)
+
+                Text("→").foregroundStyle(.tertiary)
+
+                Button {
+                    SpeechManager.shared.speak(model.translatedText, language: model.targetLanguage)
+                } label: {
+                    Text("\(model.targetLanguage.displayName)")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("朗读译文")
+                .disabled(model.translatedText.isEmpty)
+
+                Text("· \(model.providerName)").foregroundStyle(.secondary)
             } else {
                 Text("SnapTranslator")
             }

@@ -19,6 +19,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 重试所需的最近一次请求（含 OCR 行位置，用于翻译覆盖定位）
     private var lastRequest: (image: NSImage, sourceText: String, ocrLines: [(text: String, rect: CGRect)])?
+    /// 实时翻译请求序号，用于丢弃过期请求结果
+    private var liveTranslateGeneration: UInt = 0
+    /// 实时翻译防抖任务（编辑停顿后触发，避免每敲一个字都请求）
+    private var liveTranslateDebounce: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         wordBook = WordBookStore()
@@ -376,6 +380,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         panelController.onOpenWordBook = { [weak self] in
             self?.openWordBook()
+        }
+        panelController.onLiveTranslate = { [weak self] text in
+            self?.liveTranslate(text: text)
+        }
+    }
+
+    /// 实时翻译：翻译页签左侧原文编辑后即时翻译，右侧实时更新
+    private func liveTranslate(text: String) {
+        let model = panelController.model
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 清空时立即清空译文，无需等待防抖
+        if trimmed.isEmpty {
+            liveTranslateDebounce?.cancel()
+            liveTranslateGeneration &+= 1
+            model.translatedText = ""
+            model.collectNotice = ""
+            return
+        }
+
+        // 编辑停顿 400ms 后再翻译，避免连续输入时反复请求
+        liveTranslateDebounce?.cancel()
+        liveTranslateDebounce = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            self?.performLiveTranslate(text: trimmed)
+        }
+    }
+
+    /// 实际执行实时翻译请求（防抖后调用）
+    private func performLiveTranslate(text: String) {
+        let model = panelController.model
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            model.translatedText = ""
+            model.collectNotice = ""
+            return
+        }
+        // 同步源文本（编辑视图已更新 model.sourceText，这里仅确保一致）
+        model.sourceText = text
+        // 源语言判定
+        let detected = LanguageDetector.detect(trimmed)
+        let source = detected ?? settings.sourceHint
+        // 若源语言与目标语言相同，自动切到英文
+        let target = effectiveTargetLanguage(source: source)
+        model.targetLanguage = target
+        // 生成序号，仅最新一次请求的结果生效（防止旧请求覆盖新输入）
+        liveTranslateGeneration &+= 1
+        let generation = liveTranslateGeneration
+
+        translationHost.show()
+        let service = TranslationService(
+            config: .init(
+                primary: settings.primaryEngine,
+                openaiBaseURL: settings.openaiBaseURL,
+                openaiModel: settings.openaiModel,
+                openaiAPIKey: settings.openaiAPIKey,
+                deeplAPIKey: settings.deeplAPIKey,
+                anchor: translationHost.anchor
+            )
+        )
+        Task { [weak self, weak model] in
+            // 仅当仍是最新请求时才更新结果并隐藏锚点，旧请求直接丢弃
+            guard let self, let model, generation == self.liveTranslateGeneration else { return }
+            self.translationHost.hide()
+            do {
+                let (translation, provider) = try await service.translate(
+                    trimmed,
+                    from: source,
+                    to: target
+                )
+                // 请求期间可能又有新编辑，再次校验后才更新
+                guard generation == self.liveTranslateGeneration else { return }
+                model.translatedText = translation
+                model.providerName = provider
+                model.sourceLanguage = source
+                model.collectNotice = ""
+            } catch {
+                guard generation == self.liveTranslateGeneration else { return }
+                model.translatedText = ""
+                model.collectNotice = "实时翻译失败"
+                Task { [weak model] in
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    model?.collectNotice = ""
+                }
+            }
         }
     }
 
