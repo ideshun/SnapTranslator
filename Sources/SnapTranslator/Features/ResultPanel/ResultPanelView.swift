@@ -800,9 +800,14 @@ struct ResultPanelView: View {
 
     // MARK: - 状态栏
 
+    /// 是否在左下角展示源/目标语言选择：翻译相关场景（翻译页签空闲输入或已完成）
+    private var showLanguageBar: Bool {
+        model.phase == .done || (model.phase == .idle && model.tab == .translation)
+    }
+
     private var statusBar: some View {
         HStack(spacing: 8) {
-            if model.phase == .done {
+            if showLanguageBar {
                 // 左下角源语言/目标语言：点击弹出选择菜单（切换语种，而非朗读）
                 Menu {
                     // 源语言选择
@@ -845,7 +850,9 @@ struct ResultPanelView: View {
                 .foregroundStyle(.secondary)
                 .help("选择目标语言")
 
-                Text("· \(model.providerName)").foregroundStyle(.secondary)
+                if !model.providerName.isEmpty {
+                    Text("· \(model.providerName)").foregroundStyle(.secondary)
+                }
             } else {
                 Text("SnapTranslator")
             }
