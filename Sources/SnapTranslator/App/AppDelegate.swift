@@ -23,6 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var liveTranslateGeneration: UInt = 0
     /// 实时翻译防抖任务（编辑停顿后触发，避免每敲一个字都请求）
     private var liveTranslateDebounce: Task<Void, Never>?
+    /// 普通翻译请求序号，用于丢弃过期请求结果
+    private var translateGeneration: UInt = 0
+    /// 当前正在进行的翻译请求数（用于协调 translationHost 的隐藏时机）
+    private var activeTranslationCount = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         wordBook = WordBookStore()
@@ -430,13 +434,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        let detected = LanguageDetector.detect(trimmed)
-        let source = detected ?? settings.sourceHint
+        let source = determineSourceLanguage(for: trimmed)
         let target = effectiveTargetLanguage(source: source)
         model.targetLanguage = target
 
         liveTranslateGeneration &+= 1
         let generation = liveTranslateGeneration
+        activeTranslationCount += 1
 
         translationHost.show()
         let service = TranslationService(
@@ -450,8 +454,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         )
         Task { [weak self, weak model] in
-            guard let self, let model, generation == self.liveTranslateGeneration else { return }
-            self.translationHost.hide()
+            guard let self, let model else { return }
+            defer {
+                self.activeTranslationCount -= 1
+                if self.activeTranslationCount <= 0 {
+                    self.activeTranslationCount = 0
+                    self.translationHost.hide()
+                }
+            }
+            guard generation == self.liveTranslateGeneration else { return }
             do {
                 let (translation, provider) = try await service.translate(
                     trimmed,
@@ -505,14 +516,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 同步源文本（编辑视图已更新 model.sourceText，这里仅确保一致）
         model.sourceText = text
         // 源语言判定
-        let detected = LanguageDetector.detect(trimmed)
-        let source = detected ?? settings.sourceHint
+        let source = determineSourceLanguage(for: trimmed)
         // 若源语言与目标语言相同，自动切到英文
         let target = effectiveTargetLanguage(source: source)
         model.targetLanguage = target
         // 生成序号，仅最新一次请求的结果生效（防止旧请求覆盖新输入）
         liveTranslateGeneration &+= 1
         let generation = liveTranslateGeneration
+        activeTranslationCount += 1
 
         translationHost.show()
         let service = TranslationService(
@@ -526,9 +537,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         )
         Task { [weak self, weak model] in
-            // 仅当仍是最新请求时才更新结果并隐藏锚点，旧请求直接丢弃
-            guard let self, let model, generation == self.liveTranslateGeneration else { return }
-            self.translationHost.hide()
+            guard let self, let model else { return }
+            defer {
+                self.activeTranslationCount -= 1
+                if self.activeTranslationCount <= 0 {
+                    self.activeTranslationCount = 0
+                    self.translationHost.hide()
+                }
+            }
+            // 仅当仍是最新请求时才更新结果，旧请求直接丢弃
+            guard generation == self.liveTranslateGeneration else { return }
             do {
                 let (translation, provider) = try await service.translate(
                     trimmed,
@@ -659,12 +677,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
 
-        let detected = LanguageDetector.detect(trimmed)
-        let source = detected ?? settings.sourceHint
+        let source = determineSourceLanguage(for: trimmed)
         let target = effectiveTargetLanguage(source: source)
 
         translationHost.show()
-        defer { translationHost.hide() }
+        activeTranslationCount += 1
+        defer {
+            activeTranslationCount -= 1
+            if activeTranslationCount <= 0 {
+                activeTranslationCount = 0
+                translationHost.hide()
+            }
+        }
 
         let service = TranslationService(
             config: .init(
@@ -767,6 +791,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .en
     }
 
+    /// 确定源语言：用户手动选择优先，未选择时自动检测
+    private func determineSourceLanguage(for text: String) -> Language? {
+        if let hint = settings.sourceHint {
+            return hint
+        }
+        return LanguageDetector.detect(text)
+    }
+
     private func retryTranslation() {
         guard let last = lastRequest, !last.sourceText.isEmpty else {
             panelController.show(near: nil)
@@ -787,12 +819,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ) {
         // 确保翻译锚点窗口可见，TranslationSession 才能可靠触发
         translationHost.show()
-        // 源语言判定：优先使用语言检测结果，sourceHint 仅作为兜底
-        // 原因：sourceHint 可能被用户设置为英语，但截图内容是中文，强制使用 sourceHint 会导致翻译失败
-        let detected = LanguageDetector.detect(text)
-        let source = detected ?? settings.sourceHint
+        // 源语言判定：用户手动选择优先，未选择时自动检测
+        let source = determineSourceLanguage(for: text)
         // 若源语言与目标语言相同（如截图中文但目标也是中文），自动改为翻译到英文
         let target = effectiveTargetLanguage(source: source)
+        // 生成序号，仅最新一次请求的结果生效（防止旧请求覆盖新输入）
+        translateGeneration &+= 1
+        let generation = translateGeneration
+        activeTranslationCount += 1
+
         let service = TranslationService(
             config: .init(
                 primary: settings.primaryEngine,
@@ -806,13 +841,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 更新面板中的实际目标语言（可能已被 effectiveTargetLanguage 自动调整）
         model.targetLanguage = target
         Task { [weak self] in
-            defer { self?.translationHost.hide() }
+            guard let self else { return }
+            defer {
+                self.activeTranslationCount -= 1
+                if self.activeTranslationCount <= 0 {
+                    self.activeTranslationCount = 0
+                    self.translationHost.hide()
+                }
+            }
             do {
                 let (translation, provider) = try await service.translate(
                     text,
                     from: source,
                     to: target
                 )
+                guard generation == self.translateGeneration else { return }
                 model.finished(
                     translation: translation,
                     provider: provider,
@@ -820,8 +863,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     preserveTab: preserveTab,
                     addHistory: addHistory
                 )
-                self?.trimHistory()
+                self.trimHistory()
             } catch {
+                guard generation == self.translateGeneration else { return }
                 model.failed("翻译失败：\(error.localizedDescription)")
             }
         }

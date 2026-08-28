@@ -154,28 +154,28 @@ final class SettingsStore: ObservableObject {
 
 /// 默认窗口大小选项
 enum WindowSize: String, CaseIterable, Codable, Identifiable {
-    case small = "small"      // 420 x 360
-    case medium = "medium"    // 480 x 400
-    case large = "large"      // 640 x 520
-    case xlarge = "xlarge"    // 800 x 640
+    case small = "small"      // 680 x 520
+    case medium = "medium"    // 880 x 680
+    case large = "large"      // 1280 x 800
+    case xlarge = "xlarge"    // 1920 x 1080
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .small: return "小 (420×360)"
-        case .medium: return "中 (480×400)"
-        case .large: return "大 (640×520)"
-        case .xlarge: return "超大 (800×640)"
+        case .small: return "小 (680×520)"
+        case .medium: return "中 (880×680)"
+        case .large: return "大 (1280×800)"
+        case .xlarge: return "超大 (1920×1080)"
         }
     }
 
     var size: CGSize {
         switch self {
-        case .small: return CGSize(width: 420, height: 360)
-        case .medium: return CGSize(width: 480, height: 400)
-        case .large: return CGSize(width: 640, height: 520)
-        case .xlarge: return CGSize(width: 800, height: 640)
+        case .small: return CGSize(width: 680, height: 520)
+        case .medium: return CGSize(width: 880, height: 680)
+        case .large: return CGSize(width: 1280, height: 800)
+        case .xlarge: return CGSize(width: 1920, height: 1080)
         }
     }
 }
