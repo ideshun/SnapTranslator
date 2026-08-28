@@ -22,15 +22,18 @@ final class ResultModel: ObservableObject {
     }
 
     @Published var phase: Phase = .idle
-    @Published var tab: Tab = .sideBySide
+    /// 默认聚焦「翻译」页签，支持输入内容实时翻译
+    @Published var tab: Tab = .translation
     @Published var image: NSImage?
     @Published var sourceText = ""
     @Published var translatedText = ""
     @Published var sourceLanguage: Language?
     @Published var targetLanguage: Language = .zhHans
     @Published var providerName = ""
-    /// 当前文本选区（供收藏按钮），非空时工具条显示「收藏选中」
+    /// 右侧文本选区（供收藏按钮），非空时工具条显示「收藏选中」
     @Published var selectedText = ""
+    /// 左侧文本选区（供左侧朗读时优先朗读选中内容）
+    @Published var leftSelectedText = ""
     /// 收藏成功后的短暂提示
     @Published var collectNotice = ""
     /// OCR 识别到的每行文字及其在图像中的归一化位置（用于翻译覆盖定位）
@@ -120,6 +123,7 @@ final class ResultModel: ObservableObject {
         sourceLanguage = nil
         providerName = ""
         selectedText = ""
+        leftSelectedText = ""
         collectNotice = ""
         retrySourceText = ""
         ocrLines = []

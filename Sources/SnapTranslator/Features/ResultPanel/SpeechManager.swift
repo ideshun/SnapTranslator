@@ -11,11 +11,12 @@ final class SpeechManager: ObservableObject {
     private var currentLanguage: Language?
     @Published private(set) var isPaused = false
     @Published private(set) var isMuted = false
+    /// 朗读状态（含暂停时仍为 true），驱动 UI 中暂停/停止按钮的可用性
+    @Published private(set) var isSpeaking = false
 
-    private init() {}
-
-    /// 当前是否正在朗读（含暂停状态）
-    var isSpeaking: Bool { synthesizer.isSpeaking }
+    private init() {
+        synthesizer.delegate = self
+    }
 
     /// 当前是否已暂停
     var isPausedState: Bool { isPaused }
@@ -32,12 +33,12 @@ final class SpeechManager: ObservableObject {
         guard !trimmed.isEmpty else { return }
 
         // 如果正在朗读且文本相同，不重复朗读
-        if synthesizer.isSpeaking && currentText == trimmed {
+        if isSpeaking && currentText == trimmed {
             return
         }
 
         // 停止当前朗读，避免重叠
-        if synthesizer.isSpeaking {
+        if isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
 
@@ -57,12 +58,13 @@ final class SpeechManager: ObservableObject {
             utterance.voice = fallback
         }
 
+        isSpeaking = true
         synthesizer.speak(utterance)
     }
 
     /// 暂停当前朗读
     func pause() {
-        guard synthesizer.isSpeaking, !isPaused else { return }
+        guard isSpeaking, !isPaused else { return }
         synthesizer.pauseSpeaking(at: .word)
         isPaused = true
     }
@@ -78,27 +80,28 @@ final class SpeechManager: ObservableObject {
     func togglePause() {
         if isPaused {
             resume()
-        } else if synthesizer.isSpeaking {
+        } else if isSpeaking {
             pause()
         }
     }
 
     /// 停止当前朗读
     func stop() {
-        if synthesizer.isSpeaking {
+        if isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
         currentText = ""
         currentLanguage = nil
         isPaused = false
+        isSpeaking = false
     }
 
     /// 切换静音/恢复音量
     func toggleMute() {
         isMuted.toggle()
-        // 静音时把音量设为 0，恢复时设为 1
+        // 静音时停止当前朗读
         if isMuted {
-            synthesizer.stopSpeaking(at: .immediate)
+            stop()
         }
     }
 
@@ -106,5 +109,36 @@ final class SpeechManager: ObservableObject {
     func speakSelection(_ selected: String, fullText: String, language: Language?) {
         let text = selected.isEmpty ? fullText : selected
         speak(text, language: language)
+    }
+}
+
+// MARK: - AVSpeechSynthesizerDelegate
+
+extension SpeechManager: AVSpeechSynthesizerDelegate {
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            self.isSpeaking = false
+            self.isPaused = false
+            self.currentText = ""
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            self.isSpeaking = false
+            self.isPaused = false
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didPause utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            self.isPaused = true
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didContinue utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            self.isPaused = false
+        }
     }
 }

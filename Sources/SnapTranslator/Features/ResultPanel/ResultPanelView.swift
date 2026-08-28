@@ -44,7 +44,7 @@ struct ResultPanelView: View {
             }
             .pickerStyle(.segmented)
             .frame(width: 240)
-            .disabled(model.phase != .done)
+            .disabled(!(model.phase == .done || model.phase == .idle))
             .labelsHidden()
 
             Spacer()
@@ -110,62 +110,115 @@ struct ResultPanelView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch model.phase {
-        case .idle:
-            VStack(spacing: 10) {
-                Image(systemName: "character.bubble")
-                    .font(.system(size: 36))
-                    .foregroundStyle(.secondary)
-                Text("按下 \(settings.hotkeyCapture.display) 截屏翻译")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                if !model.history.isEmpty {
-                    historySection
+        // 空闲态也展示「翻译」页签，支持输入内容实时翻译
+        if model.phase == .idle && model.tab == .translation {
+            idleTranslationContent
+        } else {
+            switch model.phase {
+            case .idle:
+                VStack(spacing: 10) {
+                    Image(systemName: "character.bubble")
+                        .font(.system(size: 36))
+                        .foregroundStyle(.secondary)
+                    Text("按下 \(settings.hotkeyCapture.display) 截屏翻译")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                    if !model.history.isEmpty {
+                        historySection
+                    }
                 }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-        case .recognizing:
-            ProgressView("识别文字中…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-        case .translating:
-            VStack(spacing: 0) {
-                SelectableTextView(
+            case .recognizing:
+                ProgressView("识别文字中…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            case .translating:
+                VStack(spacing: 0) {
+                    SelectableTextView(
+                        text: model.sourceText,
+                        paragraphSpacing: 4,
+                        lineSpacing: 2
+                    )
+                    Divider()
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("翻译中…（\(model.targetLanguage.displayName)）")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(12)
+                }
+
+            case .done:
+                doneContent
+
+            case .failed(let message):
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.orange)
+                    Text(message)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                    Button("重试") {
+                        onRetry()
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    /// 空闲态的翻译页签内容：左侧可编辑原文，右侧实时译文
+    private var idleTranslationContent: some View {
+        HSplitView {
+            // 左栏：原文编辑
+            VStack(alignment: .leading, spacing: 0) {
+                speechToolbar(
                     text: model.sourceText,
-                    paragraphSpacing: 4,
-                    lineSpacing: 2
+                    language: model.sourceLanguage,
+                    selection: model.leftSelectedText
                 )
                 Divider()
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("翻译中…（\(model.targetLanguage.displayName)）")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(12)
+                EditableTextView(
+                    text: $model.sourceText,
+                    paragraphSpacing: 4,
+                    lineSpacing: 2,
+                    onChange: { onLiveTranslate($0) },
+                    onSelectionChange: { model.leftSelectedText = $0 }
+                )
             }
+            .frame(minWidth: 160)
 
-        case .done:
-            doneContent
-
-        case .failed(let message):
-            VStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 28))
-                    .foregroundStyle(.orange)
-                Text(message)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
-                Button("重试") {
-                    onRetry()
+            // 右栏：译文
+            VStack(alignment: .leading, spacing: 0) {
+                speechToolbar(
+                    text: model.translatedText,
+                    language: model.targetLanguage,
+                    selection: model.selectedText
+                )
+                Divider()
+                if model.translatedText.isEmpty {
+                    Text("输入内容后自动翻译")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    SelectableTextView(
+                        text: model.translatedText,
+                        onSelectionChange: { model.selectedText = $0 },
+                        onCollect: onCollect,
+                        paragraphSpacing: 4,
+                        lineSpacing: 2
+                    )
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 160)
         }
     }
 
@@ -237,7 +290,8 @@ struct ResultPanelView: View {
                     // 阅读控制条：右上角
                     speechToolbar(
                         text: model.sourceText,
-                        language: model.sourceLanguage
+                        language: model.sourceLanguage,
+                        selection: model.selectedText
                     )
                     Divider()
                     if !model.sourceText.isEmpty {
@@ -265,14 +319,16 @@ struct ResultPanelView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     speechToolbar(
                         text: model.sourceText,
-                        language: model.sourceLanguage
+                        language: model.sourceLanguage,
+                        selection: model.leftSelectedText
                     )
                     Divider()
                     EditableTextView(
                         text: $model.sourceText,
                         paragraphSpacing: 4,
                         lineSpacing: 2,
-                        onChange: { onLiveTranslate($0) }
+                        onChange: { onLiveTranslate($0) },
+                        onSelectionChange: { model.leftSelectedText = $0 }
                     )
                 }
                 .frame(minWidth: 160)
@@ -281,7 +337,8 @@ struct ResultPanelView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     speechToolbar(
                         text: model.translatedText,
-                        language: model.targetLanguage
+                        language: model.targetLanguage,
+                        selection: model.selectedText
                     )
                     Divider()
                     SelectableTextView(
@@ -305,7 +362,8 @@ struct ResultPanelView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     speechToolbar(
                         text: model.translatedText,
-                        language: model.targetLanguage
+                        language: model.targetLanguage,
+                        selection: model.selectedText
                     )
                     Divider()
                     SelectableTextView(
@@ -340,17 +398,22 @@ struct ResultPanelView: View {
     // MARK: - 朗读控制条
 
     /// 每个面板右上角的朗读控制条：朗读/暂停/继续/停止/静音
-    private func speechToolbar(text: String, language: Language?) -> some View {
+    /// - Parameters:
+    ///   - text: 面板全文内容
+    ///   - language: 朗读语言
+    ///   - selection: 面板自身的选中文本（朗读时优先朗读选中内容）
+    private func speechToolbar(text: String, language: Language?, selection: String) -> some View {
         HStack(spacing: 8) {
-            // 朗读按钮：有选中文本时朗读选中部分
+            // 朗读按钮：有选中文本时朗读选中部分（使用本面板的选中内容）
             Button {
-                let speakText = model.selectedText.isEmpty ? text : model.selectedText
+                let speakText = selection.isEmpty ? text : selection
                 speech.speak(speakText, language: language)
             } label: {
                 Image(systemName: "speaker.wave.2")
+                    .frame(width: 14, height: 14)
             }
             .buttonStyle(.borderless)
-            .help(model.selectedText.isEmpty ? "朗读全文" : "朗读选中部分")
+            .help(selection.isEmpty ? "朗读全文" : "朗读选中部分")
             .disabled(text.isEmpty)
 
             // 暂停/继续
@@ -358,6 +421,7 @@ struct ResultPanelView: View {
                 speech.togglePause()
             } label: {
                 Image(systemName: speech.isPausedState ? "play.fill" : "pause.fill")
+                    .frame(width: 14, height: 14)
             }
             .buttonStyle(.borderless)
             .help(speech.isPausedState ? "继续朗读" : "暂停朗读")
@@ -368,30 +432,33 @@ struct ResultPanelView: View {
                 speech.stop()
             } label: {
                 Image(systemName: "stop.fill")
+                    .frame(width: 14, height: 14)
             }
             .buttonStyle(.borderless)
             .help("停止朗读")
             .disabled(!speech.isSpeaking)
 
-            // 静音
+            // 静音（图标固定尺寸，避免切换时高度抖动）
             Button {
                 speech.toggleMute()
             } label: {
                 Image(systemName: speech.isMutedState ? "speaker.slash.fill" : "speaker.fill")
+                    .frame(width: 14, height: 14)
             }
             .buttonStyle(.borderless)
             .help(speech.isMutedState ? "取消静音" : "静音")
 
             Spacer()
 
-            if !model.selectedText.isEmpty {
-                Text("已选中: \(model.selectedText.prefix(12))…")
+            if !selection.isEmpty {
+                Text("已选中: \(selection.prefix(12))…")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
         .font(.system(size: 11))
+        .frame(height: 24)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(Color.gray.opacity(0.08))

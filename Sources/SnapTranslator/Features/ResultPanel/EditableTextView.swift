@@ -3,12 +3,15 @@ import SwiftUI
 
 /// 可编辑文本视图：用于翻译页签左侧识别区，支持编辑并实时触发翻译
 /// 文字变化时通过 onChange 回调（供 AppDelegate 实时翻译）
+/// 同时通过 onSelectionChange 回调跟踪左侧选中文本（供左侧朗读优先朗读选中内容）
 struct EditableTextView: NSViewRepresentable {
     @Binding var text: String
     var paragraphSpacing: CGFloat = 4
     var lineSpacing: CGFloat = 2
     /// 文字变化回调（编辑后触发，用于实时翻译）
     var onChange: ((String) -> Void)?
+    /// 选中文本变化回调（用于左侧朗读时优先朗读选中内容）
+    var onSelectionChange: ((String) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -72,6 +75,18 @@ struct EditableTextView: NSViewRepresentable {
             let newText = textView.string
             parent.text = newText
             parent.onChange?(newText)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            let range = textView.selectedRange
+            guard range.length > 0, range.location != NSNotFound else {
+                parent.onSelectionChange?("")
+                return
+            }
+            let selected = (textView.string as NSString).substring(with: range)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            parent.onSelectionChange?(selected)
         }
     }
 }
