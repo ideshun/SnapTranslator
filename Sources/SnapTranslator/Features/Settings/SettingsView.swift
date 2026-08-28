@@ -14,7 +14,7 @@ struct SettingsView: View {
             engineTab
                 .tabItem { Label("引擎", systemImage: "globe") }
         }
-        .frame(width: 480, height: 440)
+        .frame(width: 480, height: 480)
     }
 
     private var generalTab: some View {
@@ -28,6 +28,12 @@ struct SettingsView: View {
                 Text("自动检测").tag(Language?.none)
                 ForEach(Language.allCases) { language in
                     Text(language.displayName).tag(Language?.some(language))
+                }
+            }
+            // 默认窗口大小设置
+            Picker("默认窗口大小", selection: $settings.defaultWindowSize) {
+                ForEach(WindowSize.allCases) { size in
+                    Text(size.displayName).tag(size)
                 }
             }
             Toggle("在程序坞中显示图标", isOn: $settings.showInDock)

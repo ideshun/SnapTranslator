@@ -13,6 +13,9 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
     var onOpenWordBook: (() -> Void)?
     /// 翻译页签左侧原文编辑后的实时翻译回调
     var onLiveTranslate: ((String) -> Void)?
+    /// 切换源语言/目标语言回调
+    var onSourceLanguageChange: ((Language?) -> Void)?
+    var onTargetLanguageChange: ((Language) -> Void)?
 
     private let settings: SettingsStore
     private var panel: NSPanel?
@@ -39,8 +42,9 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
         if let panel {
             return panel
         }
+        let defaultSize = settings.defaultWindowSize.size
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height),
             // 含 closable/miniaturizable 以支持远程桌面（VNC）右上角红绿灯关闭/最小化
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
@@ -81,6 +85,12 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
                 },
                 onLiveTranslate: { [weak self] text in
                     self?.onLiveTranslate?(text)
+                },
+                onSourceLanguageChange: { [weak self] lang in
+                    self?.onSourceLanguageChange?(lang)
+                },
+                onTargetLanguageChange: { [weak self] lang in
+                    self?.onTargetLanguageChange?(lang)
                 }
             )
         )
