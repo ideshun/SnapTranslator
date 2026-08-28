@@ -37,11 +37,15 @@ struct EditableTextView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
-        // 仅当外部传入的文本与当前编辑内容不同时才同步（避免覆盖用户正在输入的字符）
-        if textView.string != text {
+        let coordinator = context.coordinator
+        // 仅当外部传入的文本与当前编辑内容不同，且不在输入法拼音合成（marked text）期间才同步，
+        // 避免 setAttributedString 重置 textStorage 打断中文等输入法的候选字。
+        if !textView.hasMarkedText() && textView.string != text {
+            coordinator.isProgrammatic = true
             applyStyleAndText(to: textView)
+            coordinator.isProgrammatic = false
         }
-        context.coordinator.parent = self
+        coordinator.parent = self
     }
 
     /// 应用字体、段落间距并设置文本
@@ -65,12 +69,15 @@ struct EditableTextView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: EditableTextView
+        /// 标记当前是否为程序化同步文本，避免 setAttributedString 触发递归 onChange 干扰实时翻译
+        var isProgrammatic = false
 
         init(_ parent: EditableTextView) {
             self.parent = parent
         }
 
         func textDidChange(_ notification: Notification) {
+            guard !isProgrammatic else { return }
             guard let textView = notification.object as? NSTextView else { return }
             let newText = textView.string
             parent.text = newText
