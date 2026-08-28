@@ -5,6 +5,7 @@ import SwiftUI
 struct ResultPanelView: View {
     @ObservedObject var model: ResultModel
     @ObservedObject var settings: SettingsStore
+    @ObservedObject private var speech = SpeechManager.shared
 
     let onCollect: (String, String) -> Void
     let onRetry: () -> Void
@@ -14,6 +15,9 @@ struct ResultPanelView: View {
     let onOpenWordBook: () -> Void
     /// 编辑翻译页签左侧原文后触发实时翻译
     let onLiveTranslate: (String) -> Void
+    /// 切换源语言/目标语言
+    var onSourceLanguageChange: ((Language?) -> Void)?
+    var onTargetLanguageChange: ((Language) -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -96,8 +100,8 @@ struct ResultPanelView: View {
             }
             .help("关闭（窗口）")
         }
-        // 左端不额外留间距，让 tab 与右侧关闭按钮在同一水平条内对齐
-        .padding(.leading, 4)
+        // tab 区域左边缘不留额外间距，紧凑对齐
+        .padding(.leading, 0)
         .padding(.trailing, 8)
         .padding(.vertical, 8)
     }
@@ -229,7 +233,13 @@ struct ResultPanelView: View {
                     zoomableImagePane(image: image)
                 }
                 // 右栏：原文/识别结果（带分段效果）
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 0) {
+                    // 阅读控制条：右上角
+                    speechToolbar(
+                        text: model.sourceText,
+                        language: model.sourceLanguage
+                    )
+                    Divider()
                     if !model.sourceText.isEmpty {
                         SelectableTextView(
                             text: model.sourceText,
@@ -251,20 +261,37 @@ struct ResultPanelView: View {
         case .translation:
             // 翻译：左侧原文支持编辑（实时翻译）+ 右侧译文（行距与左侧识别区一致）
             HSplitView {
-                EditableTextView(
-                    text: $model.sourceText,
-                    paragraphSpacing: 4,
-                    lineSpacing: 2,
-                    onChange: { onLiveTranslate($0) }
-                )
+                // 左栏：原文
+                VStack(alignment: .leading, spacing: 0) {
+                    speechToolbar(
+                        text: model.sourceText,
+                        language: model.sourceLanguage
+                    )
+                    Divider()
+                    EditableTextView(
+                        text: $model.sourceText,
+                        paragraphSpacing: 4,
+                        lineSpacing: 2,
+                        onChange: { onLiveTranslate($0) }
+                    )
+                }
                 .frame(minWidth: 160)
-                SelectableTextView(
-                    text: model.translatedText,
-                    onSelectionChange: { model.selectedText = $0 },
-                    onCollect: onCollect,
-                    paragraphSpacing: 4,
-                    lineSpacing: 2
-                )
+
+                // 右栏：译文
+                VStack(alignment: .leading, spacing: 0) {
+                    speechToolbar(
+                        text: model.translatedText,
+                        language: model.targetLanguage
+                    )
+                    Divider()
+                    SelectableTextView(
+                        text: model.translatedText,
+                        onSelectionChange: { model.selectedText = $0 },
+                        onCollect: onCollect,
+                        paragraphSpacing: 4,
+                        lineSpacing: 2
+                    )
+                }
                 .frame(minWidth: 160)
             }
 
@@ -274,32 +301,100 @@ struct ResultPanelView: View {
                 if let image = model.image {
                     zoomableImagePane(image: image)
                 }
-                // 右栏：译文以文本形式展示（行距与左侧识别区一致）
-                SelectableTextView(
-                    text: model.translatedText,
-                    onSelectionChange: { model.selectedText = $0 },
-                    onCollect: onCollect,
-                    paragraphSpacing: 4,
-                    lineSpacing: 2
-                )
+                // 右栏：译文以文本形式展示
+                VStack(alignment: .leading, spacing: 0) {
+                    speechToolbar(
+                        text: model.translatedText,
+                        language: model.targetLanguage
+                    )
+                    Divider()
+                    SelectableTextView(
+                        text: model.translatedText,
+                        onSelectionChange: { model.selectedText = $0 },
+                        onCollect: onCollect,
+                        paragraphSpacing: 4,
+                        lineSpacing: 2
+                    )
+                }
                 .frame(minWidth: 160)
             }
 
         case .oneToOne:
-            // 1:1 模式：左右对照，左边截图，右边翻译覆盖结果（按 OCR 位置对应）
+            // 1:1 模式：左右对照，左边截图，右边翻译覆盖结果
             HSplitView {
                 // 左栏：截图原图
                 if let image = model.image {
                     zoomableImagePane(image: image)
                 }
-                // 右栏：翻译覆盖结果
+                // 右栏：翻译覆盖结果（仅左栏有缩放控制）
                 if let image = model.image, !model.translatedText.isEmpty {
                     oneToOneView(image: image, translation: model.translatedText, ocrLines: model.ocrLines)
                 } else if let image = model.image {
-                    zoomableImagePane(image: image)
+                    InteractiveImageView(image: image, scale: $imageScale)
+                        .frame(minWidth: 160)
                 }
             }
         }
+    }
+
+    // MARK: - 朗读控制条
+
+    /// 每个面板右上角的朗读控制条：朗读/暂停/继续/停止/静音
+    private func speechToolbar(text: String, language: Language?) -> some View {
+        HStack(spacing: 8) {
+            // 朗读按钮：有选中文本时朗读选中部分
+            Button {
+                let speakText = model.selectedText.isEmpty ? text : model.selectedText
+                speech.speak(speakText, language: language)
+            } label: {
+                Image(systemName: "speaker.wave.2")
+            }
+            .buttonStyle(.borderless)
+            .help(model.selectedText.isEmpty ? "朗读全文" : "朗读选中部分")
+            .disabled(text.isEmpty)
+
+            // 暂停/继续
+            Button {
+                speech.togglePause()
+            } label: {
+                Image(systemName: speech.isPausedState ? "play.fill" : "pause.fill")
+            }
+            .buttonStyle(.borderless)
+            .help(speech.isPausedState ? "继续朗读" : "暂停朗读")
+            .disabled(!speech.isSpeaking)
+
+            // 停止
+            Button {
+                speech.stop()
+            } label: {
+                Image(systemName: "stop.fill")
+            }
+            .buttonStyle(.borderless)
+            .help("停止朗读")
+            .disabled(!speech.isSpeaking)
+
+            // 静音
+            Button {
+                speech.toggleMute()
+            } label: {
+                Image(systemName: speech.isMutedState ? "speaker.slash.fill" : "speaker.fill")
+            }
+            .buttonStyle(.borderless)
+            .help(speech.isMutedState ? "取消静音" : "静音")
+
+            Spacer()
+
+            if !model.selectedText.isEmpty {
+                Text("已选中: \(model.selectedText.prefix(12))…")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .font(.system(size: 11))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.gray.opacity(0.08))
     }
 
     // MARK: - 图片视图
@@ -357,6 +452,7 @@ struct ResultPanelView: View {
     }
 
     /// 1:1 模式：翻译结果以图片形式覆盖原图，按 OCR 位置对应
+    /// 无独立缩放按钮，统一用左侧区域的缩放控制
     @ViewBuilder
     private func oneToOneView(
         image: NSImage,
@@ -369,21 +465,15 @@ struct ResultPanelView: View {
             ocrLines: ocrLines
         ) {
             InteractiveImageView(image: coveredImage, scale: $imageScale)
-                .overlay(alignment: .bottomTrailing) {
-                    zoomControlBar
-                }
                 .frame(minWidth: 160)
         } else {
             // 无 OCR 位置信息时兜底：直接显示原图
             InteractiveImageView(image: image, scale: $imageScale)
-                .overlay(alignment: .bottomTrailing) {
-                    zoomControlBar
-                }
                 .frame(minWidth: 160)
         }
     }
 
-    /// 缩放控制按钮组（共用）
+    /// 缩放控制按钮组（仅显示在左侧图片区域）
     private var zoomControlBar: some View {
         HStack(spacing: 6) {
             Button {
@@ -460,6 +550,7 @@ struct ResultPanelView: View {
     /// 渲染译文覆盖图：在原图上绘制译文，每行译文覆盖在对应 OCR 行位置
     /// 与 renderPositionedTextImage 的区别：背景使用原图（不透明），译文覆盖在文字上
     /// 按换行后实际高度动态调整字号与覆盖区，确保译文完整显示不被裁切
+    /// 字号比默认大，提升 1:1 翻译区的可读性
     private static func renderPositionedCoverImage(
         image: NSImage,
         translation: String,
@@ -523,8 +614,9 @@ struct ResultPanelView: View {
             let maxTextHeight = max(rect.height * 3, 36)
 
             // 根据换行后实际高度动态调整字号，确保完整显示
-            var fontSize: CGFloat = 14
-            let minFontSize: CGFloat = 8
+            // 起始字号加大到 17，提升可读性
+            var fontSize: CGFloat = 17
+            let minFontSize: CGFloat = 10
             var fittedFont = NSFont.systemFont(ofSize: fontSize, weight: .medium)
             var fittedHeight = rect.height
 
@@ -644,28 +736,47 @@ struct ResultPanelView: View {
     private var statusBar: some View {
         HStack(spacing: 8) {
             if model.phase == .done {
-                // 左下角源语言/目标语言可点击，朗读对应文本
-                Button {
-                    SpeechManager.shared.speak(model.sourceText, language: model.sourceLanguage)
+                // 左下角源语言/目标语言：点击弹出选择菜单（切换语种，而非朗读）
+                Menu {
+                    // 源语言选择
+                    Button("自动检测") {
+                        model.sourceLanguage = nil
+                        onSourceLanguageChange?(nil)
+                    }
+                    Divider()
+                    ForEach(Language.allCases) { lang in
+                        Button(lang.displayName) {
+                            model.sourceLanguage = lang
+                            onSourceLanguageChange?(lang)
+                        }
+                    }
                 } label: {
-                    Text("\(model.sourceLanguage?.displayName ?? "自动")")
+                    Text(model.sourceLanguage?.displayName ?? "自动")
                 }
-                .buttonStyle(.plain)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
                 .foregroundStyle(.secondary)
-                .help("朗读识别原文")
-                .disabled(model.sourceText.isEmpty)
+                .help("选择源语言")
 
                 Text("→").foregroundStyle(.tertiary)
 
-                Button {
-                    SpeechManager.shared.speak(model.translatedText, language: model.targetLanguage)
+                // 目标语言选择
+                Menu {
+                    ForEach(Language.allCases) { lang in
+                        Button(lang.displayName) {
+                            model.targetLanguage = lang
+                            onTargetLanguageChange?(lang)
+                        }
+                    }
                 } label: {
-                    Text("\(model.targetLanguage.displayName)")
+                    Text(model.targetLanguage.displayName)
                 }
-                .buttonStyle(.plain)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
                 .foregroundStyle(.secondary)
-                .help("朗读译文")
-                .disabled(model.translatedText.isEmpty)
+                .help("选择目标语言")
 
                 Text("· \(model.providerName)").foregroundStyle(.secondary)
             } else {

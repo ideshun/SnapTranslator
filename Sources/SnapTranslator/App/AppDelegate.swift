@@ -384,6 +384,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panelController.onLiveTranslate = { [weak self] text in
             self?.liveTranslate(text: text)
         }
+        panelController.onSourceLanguageChange = { [weak self] lang in
+            self?.handleSourceLanguageChange(lang)
+        }
+        panelController.onTargetLanguageChange = { [weak self] lang in
+            self?.handleTargetLanguageChange(lang)
+        }
+    }
+
+    // MARK: - 语言切换
+
+    /// 用户从状态栏选择源语言后：更新设置并重新翻译当前文本
+    private func handleSourceLanguageChange(_ lang: Language?) {
+        // 更新持久化设置
+        settings.sourceHint = lang
+        // 如有当前文本，重新翻译
+        reTranslateCurrent()
+    }
+
+    /// 用户从状态栏选择目标语言后：更新设置并重新翻译当前文本
+    private func handleTargetLanguageChange(_ lang: Language) {
+        settings.targetLanguage = lang
+        reTranslateCurrent()
+    }
+
+    /// 用当前源/目标语言设置重新翻译当前文本
+    private func reTranslateCurrent() {
+        let model = panelController.model
+        guard !model.sourceText.isEmpty else { return }
+        let image = model.image
+        // 重置翻译状态（保留当前 tab）
+        model.phase = .translating
+        guard let image else {
+            // 无图片时仅更新译文（可能来自实时翻译场景）
+            let text = model.sourceText
+            performDirectTranslate(text: text)
+            return
+        }
+        translate(text: model.sourceText, image: image, model: model, preserveTab: true, addHistory: false)
+    }
+
+    /// 无图片时的直接翻译（如实时翻译场景切换语种）
+    private func performDirectTranslate(text: String) {
+        let model = panelController.model
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let detected = LanguageDetector.detect(trimmed)
+        let source = detected ?? settings.sourceHint
+        let target = effectiveTargetLanguage(source: source)
+        model.targetLanguage = target
+
+        liveTranslateGeneration &+= 1
+        let generation = liveTranslateGeneration
+
+        translationHost.show()
+        let service = TranslationService(
+            config: .init(
+                primary: settings.primaryEngine,
+                openaiBaseURL: settings.openaiBaseURL,
+                openaiModel: settings.openaiModel,
+                openaiAPIKey: settings.openaiAPIKey,
+                deeplAPIKey: settings.deeplAPIKey,
+                anchor: translationHost.anchor
+            )
+        )
+        Task { [weak self, weak model] in
+            guard let self, let model, generation == self.liveTranslateGeneration else { return }
+            self.translationHost.hide()
+            do {
+                let (translation, provider) = try await service.translate(
+                    trimmed,
+                    from: source,
+                    to: target
+                )
+                guard generation == self.liveTranslateGeneration else { return }
+                model.translatedText = translation
+                model.providerName = provider
+                model.sourceLanguage = source
+                model.phase = .done
+            } catch {
+                guard generation == self.liveTranslateGeneration else { return }
+                model.phase = .failed("翻译失败：\(error.localizedDescription)")
+            }
+        }
     }
 
     /// 实时翻译：翻译页签左侧原文编辑后即时翻译，右侧实时更新
@@ -469,19 +553,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 交换默认源/目标语言方向（如英译中 ↔ 中译英），下次截屏生效
+    /// 交换默认源/目标语言方向（如英译中 ↔ 中译英）
+    /// 对下次截屏生效；同时更新当前面板中的语言显示
     @objc private func swapLanguages() {
         let model = panelController.model
-        // 源语言：优先用已识别到的源语言，其次用设置里的 sourceHint
-        let currentSource = model.sourceLanguage ?? settings.sourceHint
+        // 源语言：优先用已识别到的源语言，其次用设置里的 sourceHint，兜底英文
+        let currentSource = model.sourceLanguage ?? settings.sourceHint ?? .en
         // 目标语言：使用面板上当前显示的实际目标语言（可能已被自动调整）
         let currentTarget = model.targetLanguage
-        guard let currentSource, currentSource != currentTarget else { return }
+        guard currentSource != currentTarget else {
+            model.collectNotice = "源语言和目标语言相同，无需切换"
+            Task { [weak model] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                model?.collectNotice = ""
+            }
+            return
+        }
 
         // 交换持久化默认方向：新源 = 原目标，新目标 = 原源
         settings.sourceHint = currentTarget
         settings.targetLanguage = currentSource
+        // 同时更新面板显示
+        model.sourceLanguage = currentTarget
+        model.targetLanguage = currentSource
         model.collectNotice = "已切换语向：\(currentTarget.displayName) → \(currentSource.displayName)"
+
         Task { [weak model] in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             model?.collectNotice = ""
@@ -544,11 +640,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             presentErrorAlert("生词本不可用", error: nil)
             return
         }
+        let view = WordBookView(
+            store: wordBook,
+            onTranslate: { [weak self] text in
+                guard let self else { return "" }
+                return await self.translateForWordBook(text: text)
+            }
+        )
         showWindow(
             key: \AppDelegate.wordBookWindow,
             title: "生词本",
-            content: WordBookView(store: wordBook)
+            content: view
         )
+    }
+
+    /// 生词本界面调用的翻译
+    private func translateForWordBook(text: String) async -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        let detected = LanguageDetector.detect(trimmed)
+        let source = detected ?? settings.sourceHint
+        let target = effectiveTargetLanguage(source: source)
+
+        translationHost.show()
+        defer { translationHost.hide() }
+
+        let service = TranslationService(
+            config: .init(
+                primary: settings.primaryEngine,
+                openaiBaseURL: settings.openaiBaseURL,
+                openaiModel: settings.openaiModel,
+                openaiAPIKey: settings.openaiAPIKey,
+                deeplAPIKey: settings.deeplAPIKey,
+                anchor: translationHost.anchor
+            )
+        )
+        do {
+            let (translation, _) = try await service.translate(
+                trimmed,
+                from: source,
+                to: target
+            )
+            return translation
+        } catch {
+            return "翻译失败：\(error.localizedDescription)"
+        }
     }
 
     @objc private func openSettings() {
@@ -641,7 +778,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         translate(text: last.sourceText, image: last.image, model: model)
     }
 
-    private func translate(text: String, image: NSImage, model: ResultModel) {
+    private func translate(
+        text: String,
+        image: NSImage,
+        model: ResultModel,
+        preserveTab: Bool = false,
+        addHistory: Bool = true
+    ) {
         // 确保翻译锚点窗口可见，TranslationSession 才能可靠触发
         translationHost.show()
         // 源语言判定：优先使用语言检测结果，sourceHint 仅作为兜底
@@ -670,7 +813,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     from: source,
                     to: target
                 )
-                model.finished(translation: translation, provider: provider, source: source)
+                model.finished(
+                    translation: translation,
+                    provider: provider,
+                    source: source,
+                    preserveTab: preserveTab,
+                    addHistory: addHistory
+                )
                 self?.trimHistory()
             } catch {
                 model.failed("翻译失败：\(error.localizedDescription)")

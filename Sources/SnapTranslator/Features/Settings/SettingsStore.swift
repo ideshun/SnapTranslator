@@ -39,6 +39,10 @@ final class SettingsStore: ObservableObject {
     @Published var historyLimit: Int {
         didSet { defaults.set(historyLimit, forKey: "st.historyLimit") }
     }
+    /// 默认窗口大小（宽度 x 高度）
+    @Published var defaultWindowSize: WindowSize {
+        didSet { defaults.set(defaultWindowSize.rawValue, forKey: "st.defaultWindowSize") }
+    }
 
     // MARK: - 快捷键
 
@@ -93,6 +97,7 @@ final class SettingsStore: ObservableObject {
         launchAtLogin = defaults.bool(forKey: "st.launchAtLogin")
         showInDock = defaults.object(forKey: "st.showInDock") as? Bool ?? true
         historyLimit = defaults.object(forKey: "st.historyLimit") as? Int ?? 10
+        defaultWindowSize = WindowSize(rawValue: defaults.string(forKey: "st.defaultWindowSize") ?? "") ?? .medium
         hotkeyCapture = Self.loadHotkey("st.hotkey.capture")
             ?? HotkeySpec(keyCode: 1, modifiers: HotkeySpec.optionModifier) // ⌥S
         hotkeyRecapture = Self.loadHotkey("st.hotkey.recapture")
@@ -140,9 +145,37 @@ final class SettingsStore: ObservableObject {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            // 非 .app bundle（如 swift run）下注册登录项必然失败，记录即可
+            // 非 .app bundle（如 swift run）下注册登录项失败，记录即可
             NSLog("登录项设置失败 launchAtLogin=%@ error=%@",
                   String(launchAtLogin), error.localizedDescription)
+        }
+    }
+}
+
+/// 默认窗口大小选项
+enum WindowSize: String, CaseIterable, Codable, Identifiable {
+    case small = "small"      // 420 x 360
+    case medium = "medium"    // 480 x 400
+    case large = "large"      // 640 x 520
+    case xlarge = "xlarge"    // 800 x 640
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .small: return "小 (420×360)"
+        case .medium: return "中 (480×400)"
+        case .large: return "大 (640×520)"
+        case .xlarge: return "超大 (800×640)"
+        }
+    }
+
+    var size: CGSize {
+        switch self {
+        case .small: return CGSize(width: 420, height: 360)
+        case .medium: return CGSize(width: 480, height: 400)
+        case .large: return CGSize(width: 640, height: 520)
+        case .xlarge: return CGSize(width: 800, height: 640)
         }
     }
 }

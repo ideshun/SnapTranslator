@@ -73,16 +73,28 @@ final class ResultModel: ObservableObject {
         phase = .translating
     }
 
-    func finished(translation: String, provider: String, source: Language?) {
+    /// 翻译完成回调
+    /// - Parameters:
+    ///   - preserveTab: 是否保留当前 tab（用于语言切换后的重新翻译），默认 false 切换到 1:1
+    ///   - addHistory: 是否记录历史，默认 true
+    func finished(
+        translation: String,
+        provider: String,
+        source: Language?,
+        preserveTab: Bool = false,
+        addHistory: Bool = true
+    ) {
         translatedText = translation
         providerName = provider
         sourceLanguage = source
         phase = .done
-        // 翻译完成后默认聚焦 1:1 页签（左原图 + 右译文覆盖）
-        tab = .oneToOne
+        if !preserveTab {
+            // 翻译完成后默认聚焦 1:1 页签（左原图 + 右译文覆盖）
+            tab = .oneToOne
+        }
 
         // 记录识别历史
-        if let image {
+        if addHistory, let image {
             let entry = HistoryEntry(
                 image: image,
                 sourceText: sourceText,
