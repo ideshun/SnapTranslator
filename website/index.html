@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SnapTranslator · 轻量级 macOS 截屏翻译</title>
+<meta name="description" content="SnapTranslator —— 轻量级 macOS 截屏翻译应用。全局快捷键、框选区域、离线 OCR、离线优先翻译、原文/译文对照、生词本，对标有道截屏翻译核心体验。零第三方依赖。" />
+<link rel="stylesheet" href="styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%233b82f6'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='white' font-family='sans-serif'>译</text></svg>" />
+</head>
+<body>
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top">
+      <span class="brand-logo">译</span>
+      <span class="brand-name">SnapTranslator</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#features">功能</a>
+      <a href="#engines">翻译引擎</a>
+      <a href="#install">安装</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="btn btn-primary nav-download" href="#install">免费下载</a>
+  </div>
+</header>
+
+<section class="hero" id="top">
+  <div class="hero-inner">
+    <p class="hero-badge">macOS · 离线优先 · 轻量 1MB</p>
+    <h1>截屏即译<br/>快人一步的<span class="accent">屏幕翻译</span></h1>
+    <p class="hero-sub">
+      全局快捷键 → 框选区域 → 离线 OCR → 离线优先翻译 → 原文/译文对照 → 选词收藏生词本。
+      对标有道截屏翻译核心体验，剔除一切冗余，纯系统框架，零第三方依赖。
+    </p>
+    <div class="hero-actions">
+      <a class="btn btn-primary btn-lg" href="#install">下载 macOS 版</a>
+      <a class="btn btn-ghost btn-lg" href="#features">了解更多</a>
+    </div>
+    <div class="hero-meta">
+      <span>⌥S 唤起框选</span>
+      <span>·</span>
+      <span>12 种语言互译</span>
+      <span>·</span>
+      <span>离线可用</span>
+    </div>
+  </div>
+  <div class="hero-visual" aria-hidden="true">
+    <div class="shot-card">
+      <div class="shot-bar"><i></i><i></i><i></i></div>
+      <div class="shot-body">
+        <div class="shot-line shot-line-zh">Welcome to SnapTranslator</div>
+        <div class="shot-line shot-line-en">欢迎使用 SnapTranslator</div>
+        <div class="shot-divider"></div>
+        <div class="shot-tag">原文</div>
+        <div class="shot-tag shot-tag-trans">译文</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <div class="container">
+    <h2 class="section-title">核心能力，<span class="accent">一个都不少</span></h2>
+    <p class="section-sub">把截屏翻译做到极致，剩下的统统砍掉。</p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-ico">📸</div>
+        <h3>截屏翻译</h3>
+        <p>⌥S 唤起框选，每屏遮罩 + 尺寸提示，松开自动 OCR 并翻译。首次鼠标即可框选，无需二次点击。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">🔁</div>
+        <h3>重截上次区域</h3>
+        <p>⌥⇧S 直接按上次选区截图，适合字幕、日志等连续翻译场景，效率翻倍。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">🖥️</div>
+        <h3>原文/译文对照</h3>
+        <p>原图 / 译文 / 并排三种视图切换，并排模式左右皆为图片形式，直观对照。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">🌐</div>
+        <h3>12 种语言互译</h3>
+        <p>中英等 12 种语言双向互译，一键「交换源/目标语言」立即重译。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">📌</div>
+        <h3>屏幕置顶</h3>
+        <p>结果面板常驻最上层，失焦自动降透明度，拖动、缩放、位置记忆，可一键钉住。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">📚</div>
+        <h3>选词收藏</h3>
+        <p>选中文字右键收藏到生词本，支持搜索、删除、CSV 导出，随身复习生词。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">⚡</div>
+        <h3>一键复制</h3>
+        <p>翻译结果一键复制到剪贴板，快速关闭，零打断工作流。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">🍎</div>
+        <h3>菜单栏驻留</h3>
+        <p>关闭窗口不退出应用，菜单栏访问全部功能，支持开机自启，也可切换纯菜单栏驻留。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">🖱️</div>
+        <h3>远程桌面适配</h3>
+        <p>结果面板支持右上角关闭/最小化/全屏，VNC 远程操作毫无压力。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="engines" id="engines">
+  <div class="container">
+    <h2 class="section-title">翻译引擎，<span class="accent">可靠兜底</span></h2>
+    <p class="section-sub">默认固定智谱 GLM-5.2 主引擎，四重引擎自动降级，单引擎失败 15 秒内切换。</p>
+    <div class="engine-list">
+      <div class="engine-row">
+        <span class="engine-badge engine-primary">默认</span>
+        <div class="engine-info"><strong>GLM-5.2（OpenAI 兼容）</strong><p>Base URL open.bigmodel.cn，网络稳定，设置中填智谱 API Key 即用。</p></div>
+      </div>
+      <div class="engine-row">
+        <span class="engine-badge engine-offline">离线</span>
+        <div class="engine-info"><strong>Apple 系统翻译</strong><p>完全离线，macOS 15+，下载语言包后本地翻译，绝不上传。</p></div>
+      </div>
+      <div class="engine-row">
+        <span class="engine-badge">免费</span>
+        <div class="engine-info"><strong>Google 免费接口</strong><p>零配置即用，日常翻译首选。</p></div>
+      </div>
+      <div class="engine-row">
+        <span class="engine-badge">专业</span>
+        <div class="engine-info"><strong>DeepL</strong><p>设置中填 API Key，翻译质量更专业。</p></div>
+      </div>
+    </div>
+    <p class="engines-note">💡 支持「仅离线」模式：主引擎选「仅离线」则只使用 Apple 系统翻译，绝不联网降级，适合完全离线环境。</p>
+  </div>
+</section>
+
+<section class="install" id="install">
+  <div class="container">
+    <h2 class="section-title">一分钟，<span class="accent">安装即用</span></h2>
+    <div class="install-grid">
+      <div class="install-step">
+        <span class="step-num">1</span>
+        <p>运行构建脚本，得到 <code>SnapTranslator.app</code>（约 1MB）</p>
+      </div>
+      <div class="install-step">
+        <span class="step-num">2</span>
+        <p>复制到 <code>/Applications/</code> 并打开</p>
+      </div>
+      <div class="install-step">
+        <span class="step-num">3</span>
+        <p>授权屏幕录制 → <code>⌥S</code> 开始截屏翻译</p>
+      </div>
+    </div>
+    <pre class="code-block"><code>$ ./make-app.sh
+# 产物：build/SnapTranslator.app
+$ cp -R build/SnapTranslator.app /Applications/
+$ open /Applications/SnapTranslator.app</code></pre>
+    <p class="install-req">要求 macOS 14+，Xcode Command Line Tools。仅需屏幕录制权限，无辅助功能、无网络权限要求。</p>
+  </div>
+</section>
+
+<section class="faq" id="faq">
+  <div class="container">
+    <h2 class="section-title">常见问题</h2>
+    <div class="faq-list">
+      <details>
+        <summary>SnapTranslator 和「屏幕翻译」付费应用有什么区别？</summary>
+        <p>我们聚焦截屏翻译核心体验，砍掉词典、文档翻译、背单词、广告等冗余。轻量约 1MB，零第三方依赖，纯系统框架，离线优先更省心。</p>
+      </details>
+      <details>
+        <summary>完全离线可以使用吗？</summary>
+        <p>可以。开启「仅离线」模式后，只使用 Apple 系统翻译，绝不联网。需 macOS 15+ 并下载对应 Apple 语言包。</p>
+      </details>
+      <details>
+        <summary>需要授予哪些系统权限？</summary>
+        <p>仅屏幕录制权限（截屏必需），无辅助功能、无网络权限要求。云引擎按需联网，API Key 安全存储在系统 Keychain。</p>
+      </details>
+      <details>
+        <summary>翻译质量如何保障？</summary>
+        <p>默认主引擎为智谱 GLM-5.2，配合 Apple/Google/DeepL 四重降级，单引擎 15 秒超时自动切换，翻译可靠有兜底。</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <p class="footer-brand">SnapTranslator</p>
+    <p>轻量级 macOS 截屏翻译应用 · 离线优先 · 纯系统框架</p>
+    <p class="footer-meta">Swift + SwiftUI/AppKit · Vision OCR · Translation 框架 · Carbon HotKey</p>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
