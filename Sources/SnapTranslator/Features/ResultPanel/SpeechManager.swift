@@ -4,7 +4,7 @@ import Combine
 /// 语音朗读管理器：用 AVSpeechSynthesizer 朗读文本
 /// 支持朗读、暂停、继续、停止、静音
 @MainActor
-final class SpeechManager: ObservableObject {
+final class SpeechManager: NSObject, ObservableObject {
     static let shared = SpeechManager()
     private let synthesizer = AVSpeechSynthesizer()
     private var currentText = ""
@@ -14,7 +14,8 @@ final class SpeechManager: ObservableObject {
     /// 朗读状态（含暂停时仍为 true），驱动 UI 中暂停/停止按钮的可用性
     @Published private(set) var isSpeaking = false
 
-    private init() {
+    private override init() {
+        super.init()
         synthesizer.delegate = self
     }
 

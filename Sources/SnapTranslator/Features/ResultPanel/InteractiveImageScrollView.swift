@@ -55,7 +55,7 @@ final class InteractiveImageScrollView: NSScrollView {
         drawsBackground = false
         backgroundColor = .clear
 
-        imageView.imageScaling = .NSScaleToFit
+        imageView.imageScaling = .scaleAxesIndependently
 
         containerView.addSubview(imageView)
         documentView = containerView
@@ -109,7 +109,7 @@ final class InteractiveImageScrollView: NSScrollView {
 
         // 更新图片大小（左上角对齐，带 8pt 边距）
         imageView.frame = NSRect(x: 8, y: 8, width: displayW, height: displayH)
-        imageView.imageScaling = .NSScaleToFit
+        imageView.imageScaling = .scaleAxesIndependently
     }
 
     // MARK: - 缩放控制
