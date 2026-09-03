@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SnapTranslator · 轻量级 macOS 截屏翻译</title>
+<meta name="description" content="SnapTranslator —— 轻量级 macOS 截屏翻译应用。全局快捷键、框选区域、离线 OCR、离线优先翻译、原文/译文对照、生词本，对标有道截屏翻译核心体验。零第三方依赖。" />
+<style>
+:root {
+  --bg: #0b0f1a;
+  --bg-soft: #111827;
+  --card: #151d2e;
+  --border: #232d42;
+  --text: #e7ecf5;
+  --muted: #8b96ab;
+  --accent: #3b82f6;
+  --accent-2: #6366f1;
+  --radius: 16px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: radial-gradient(1200px 600px at 80% -10%, #1d2a4a 0%, transparent 60%),
+              radial-gradient(900px 500px at 0% 0%, #16224a 0%, transparent 55%), var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+a { color: inherit; text-decoration: none; }
+code { background: #1d2a44; padding: 2px 6px; border-radius: 6px; font-size: 0.9em; }
+
+/* ---------- Nav ---------- */
+.nav {
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(11, 15, 26, 0.8);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+.nav-inner { max-width: 1100px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; gap: 24px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
+.brand-logo {
+  width: 32px; height: 32px; display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-radius: 9px; font-size: 16px; color: #fff;
+}
+.nav-links { display: flex; gap: 22px; margin-left: auto; font-size: 15px; }
+.nav-links a { color: var(--muted); transition: color 0.2s; }
+.nav-links a:hover { color: var(--text); }
+
+/* ---------- Buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 10px 20px; border-radius: 10px; font-weight: 600; font-size: 15px;
+  transition: transform 0.15s, box-shadow 0.2s, background 0.2s;
+}
+.btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; box-shadow: 0 8px 24px rgba(59, 130, 246, 0.35); }
+.btn-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(59, 130, 246, 0.45); }
+.btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+.btn-lg { padding: 14px 30px; font-size: 16px; border-radius: 12px; }
+.nav-download { padding: 8px 16px; }
+
+/* ---------- Hero ---------- */
+.hero { display: flex; align-items: center; justify-content: space-between; gap: 48px; max-width: 1100px; margin: 0 auto; padding: 96px 24px 80px; }
+.hero-badge { display: inline-block; padding: 6px 14px; border-radius: 999px; background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.3); color: var(--accent); font-size: 13px; font-weight: 600; margin-bottom: 22px; }
+.hero h1 { font-size: clamp(36px, 5vw, 56px); line-height: 1.12; letter-spacing: -1px; }
+.accent { background: linear-gradient(120deg, #60a5fa, #818cf8); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.hero-sub { margin: 20px 0 28px; font-size: 17px; color: var(--muted); max-width: 560px; }
+.hero-actions { display: flex; gap: 14px; flex-wrap: wrap; }
+.hero-meta { margin-top: 30px; display: flex; gap: 10px; color: var(--muted); font-size: 14px; }
+
+.hero-visual { flex: 1; max-width: 440px; }
+.shot-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: 0 30px 60px rgba(0,0,0,0.4); }
+.shot-bar { display: flex; gap: 6px; padding: 12px 16px; background: #0e1420; }
+.shot-bar i { width: 10px; height: 10px; border-radius: 50%; }
+.shot-bar i:nth-child(1) { background: #f87171; }
+.shot-bar i:nth-child(2) { background: #fbbf24; }
+.shot-bar i:nth-child(3) { background: #34d399; }
+.shot-body { padding: 24px; display: flex; flex-direction: column; gap: 10px; }
+.shot-line { padding: 14px; border-radius: 10px; font-size: 14px; }
+.shot-line-zh { background: #1a2436; }
+.shot-line-en { background: rgba(99,102,241,0.18); border: 1px solid rgba(99,102,241,0.3); }
+.shot-divider { height: 1px; background: var(--border); margin: 6px 0; }
+.shot-tag { align-self: flex-start; font-size: 12px; color: var(--muted); background: #0e1420; padding: 3px 10px; border-radius: 6px; }
+.shot-tag-trans { background: rgba(99,102,241,0.2); color: #a5b4fc; }
+
+/* ---------- Sections ---------- */
+section { padding: 80px 0; }
+.section-title { font-size: clamp(28px, 3.5vw, 38px); letter-spacing: -0.5px; text-align: center; }
+.section-sub { text-align: center; color: var(--muted); margin: 12px auto 48px; max-width: 620px; font-size: 16px; }
+
+/* ---------- Features ---------- */
+.feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.feature-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 26px; transition: transform 0.2s, border-color 0.2s; }
+.feature-card:hover { transform: translateY(-4px); border-color: rgba(59,130,246,0.4); }
+.feature-ico { font-size: 30px; margin-bottom: 14px; }
+.feature-card h3 { font-size: 18px; margin-bottom: 8px; }
+.feature-card p { color: var(--muted); font-size: 14px; }
+
+/* ---------- Engines ---------- */
+.engines { background: rgba(17,24,39,0.6); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.engine-list { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+.engine-row { display: flex; gap: 18px; align-items: flex-start; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; }
+.engine-badge { flex-shrink: 0; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 6px; background: rgba(139,150,171,0.15); color: var(--muted); margin-top: 3px; }
+.engine-primary { background: rgba(59,130,246,0.18); color: #60a5fa; }
+.engine-offline { background: rgba(52,211,153,0.16); color: #34d399; }
+.engine-info strong { display: block; font-size: 16px; margin-bottom: 4px; }
+.engine-info p { color: var(--muted); font-size: 14px; }
+.engines-note { text-align: center; color: var(--muted); margin-top: 28px; font-size: 14px; }
+
+/* ---------- Install ---------- */
+.install-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 28px; }
+.install-step { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; position: relative; }
+.step-num { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; font-weight: 700; margin-bottom: 14px; }
+.install-step p { color: var(--muted); font-size: 14px; }
+.code-block { background: #0a0f1a; border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 26px; overflow-x: auto; margin-bottom: 20px; }
+.code-block code { font-family: "SF Mono", "Fira Code", Consolas, monospace; font-size: 14px; color: #a5d6ff; background: transparent; }
+.install-req { text-align: center; color: var(--muted); font-size: 14px; }
+
+/* ---------- FAQ ---------- */
+.faq-list { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+.faq-list details { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px 22px; }
+.faq-list summary { cursor: pointer; font-weight: 600; font-size: 16px; }
+.faq-list details p { color: var(--muted); margin-top: 12px; font-size: 14px; }
+
+/* ---------- Footer ---------- */
+.footer { border-top: 1px solid var(--border); padding: 48px 0; text-align: center; color: var(--muted); }
+.footer-brand { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+.footer p { font-size: 14px; }
+.footer-meta { margin-top: 10px; font-size: 13px; opacity: 0.7; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 860px) {
+  .hero { flex-direction: column; padding: 60px 24px; text-align: center; }
+  .hero-sub, .hero-meta { margin-left: auto; margin-right: auto; }
+  .hero-visual { max-width: 100%; }
+  .feature-grid { grid-template-columns: repeat(2, 1fr); }
+  .install-grid { grid-template-columns: 1fr; }
+  .nav-links { display: none; }
+}
+@media (max-width: 560px) {
+  .feature-grid { grid-template-columns: 1fr; }
+}
+
+</style>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%233b82f6'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='white' font-family='sans-serif'>译</text></svg>" />
+</head>
+<body>
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top">
+      <span class="brand-logo">译</span>
+      <span class="brand-name">SnapTranslator</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#features">功能</a>
+      <a href="#engines">翻译引擎</a>
+      <a href="#install">安装</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="btn btn-primary nav-download" href="#install">免费下载</a>
+  </div>
+</header>
+
+<section class="hero" id="top">
+  <div class="hero-inner">
+    <p class="hero-badge">macOS · 离线优先 · 轻量 1MB</p>
+    <h1>截屏即译<br/>快人一步的<span class="accent">屏幕翻译</span></h1>
+    <p class="hero-sub">
+      全局快捷键 → 框选区域 → 离线 OCR → 离线优先翻译 → 原文/译文对照 → 选词收藏生词本。
+      对标有道截屏翻译核心体验，剔除一切冗余，纯系统框架，零第三方依赖。
+    </p>
+    <div class="hero-actions">
+      <a class="btn btn-primary btn-lg" href="#install">下载 macOS 版</a>
+      <a class="btn btn-ghost btn-lg" href="#features">了解更多</a>
+    </div>
+    <div class="hero-meta">
+      <span>⌥S 唤起框选</span>
+      <span>·</span>
+      <span>12 种语言互译</span>
+      <span>·</span>
+      <span>离线可用</span>
+    </div>
+  </div>
+  <div class="hero-visual" aria-hidden="true">
+    <div class="shot-card">
+      <div class="shot-bar"><i></i><i></i><i></i></div>
+      <div class="shot-body">
+        <div class="shot-line shot-line-zh">Welcome to SnapTranslator</div>
+        <div class="shot-line shot-line-en">欢迎使用 SnapTranslator</div>
+        <div class="shot-divider"></div>
+        <div class="shot-tag">原文</div>
+        <div class="shot-tag shot-tag-trans">译文</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <div class="container">
+    <h2 class="section-title">核心能力，<span class="accent">一个都不少</span></h2>
+    <p class="section-sub">把截屏翻译做到极致，剩下的统统砍掉。</p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-ico">📸</div>
+        <h3>截屏翻译</h3>
+        <p>⌥S 唤起框选，每屏遮罩 + 尺寸提示，松开自动 OCR 并翻译。首次鼠标即可框选，无需二次点击。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">🔁</div>
+        <h3>重截上次区域</h3>
+        <p>⌥⇧S 直接按上次选区截图，适合字幕、日志等连续翻译场景，效率翻倍。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">🖥️</div>
+        <h3>原文/译文对照</h3>
+        <p>原图 / 译文 / 并排三种视图切换，并排模式左右皆为图片形式，直观对照。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">🌐</div>
+        <h3>12 种语言互译</h3>
+        <p>中英等 12 种语言双向互译，一键「交换源/目标语言」立即重译。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">📌</div>
+        <h3>屏幕置顶</h3>
+        <p>结果面板常驻最上层，失焦自动降透明度，拖动、缩放、位置记忆，可一键钉住。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">📚</div>
+        <h3>选词收藏</h3>
+        <p>选中文字右键收藏到生词本，支持搜索、删除、CSV 导出，随身复习生词。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">⚡</div>
+        <h3>一键复制</h3>
+        <p>翻译结果一键复制到剪贴板，快速关闭，零打断工作流。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">🍎</div>
+        <h3>菜单栏驻留</h3>
+        <p>关闭窗口不退出应用，菜单栏访问全部功能，支持开机自启，也可切换纯菜单栏驻留。</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-ico">🖱️</div>
+        <h3>远程桌面适配</h3>
+        <p>结果面板支持右上角关闭/最小化/全屏，VNC 远程操作毫无压力。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="engines" id="engines">
+  <div class="container">
+    <h2 class="section-title">翻译引擎，<span class="accent">可靠兜底</span></h2>
+    <p class="section-sub">默认固定智谱 GLM-5.2 主引擎，四重引擎自动降级，单引擎失败 15 秒内切换。</p>
+    <div class="engine-list">
+      <div class="engine-row">
+        <span class="engine-badge engine-primary">默认</span>
+        <div class="engine-info"><strong>GLM-5.2（OpenAI 兼容）</strong><p>Base URL open.bigmodel.cn，网络稳定，设置中填智谱 API Key 即用。</p></div>
+      </div>
+      <div class="engine-row">
+        <span class="engine-badge engine-offline">离线</span>
+        <div class="engine-info"><strong>Apple 系统翻译</strong><p>完全离线，macOS 15+，下载语言包后本地翻译，绝不上传。</p></div>
+      </div>
+      <div class="engine-row">
+        <span class="engine-badge">免费</span>
+        <div class="engine-info"><strong>Google 免费接口</strong><p>零配置即用，日常翻译首选。</p></div>
+      </div>
+      <div class="engine-row">
+        <span class="engine-badge">专业</span>
+        <div class="engine-info"><strong>DeepL</strong><p>设置中填 API Key，翻译质量更专业。</p></div>
+      </div>
+    </div>
+    <p class="engines-note">💡 支持「仅离线」模式：主引擎选「仅离线」则只使用 Apple 系统翻译，绝不联网降级，适合完全离线环境。</p>
+  </div>
+</section>
+
+<section class="install" id="install">
+  <div class="container">
+    <h2 class="section-title">一分钟，<span class="accent">安装即用</span></h2>
+    <div class="install-grid">
+      <div class="install-step">
+        <span class="step-num">1</span>
+        <p>运行构建脚本，得到 <code>SnapTranslator.app</code>（约 1MB）</p>
+      </div>
+      <div class="install-step">
+        <span class="step-num">2</span>
+        <p>复制到 <code>/Applications/</code> 并打开</p>
+      </div>
+      <div class="install-step">
+        <span class="step-num">3</span>
+        <p>授权屏幕录制 → <code>⌥S</code> 开始截屏翻译</p>
+      </div>
+    </div>
+    <pre class="code-block"><code>$ ./make-app.sh
+# 产物：build/SnapTranslator.app
+$ cp -R build/SnapTranslator.app /Applications/
+$ open /Applications/SnapTranslator.app</code></pre>
+    <p class="install-req">要求 macOS 14+，Xcode Command Line Tools。仅需屏幕录制权限，无辅助功能、无网络权限要求。</p>
+  </div>
+</section>
+
+<section class="faq" id="faq">
+  <div class="container">
+    <h2 class="section-title">常见问题</h2>
+    <div class="faq-list">
+      <details>
+        <summary>SnapTranslator 和「屏幕翻译」付费应用有什么区别？</summary>
+        <p>我们聚焦截屏翻译核心体验，砍掉词典、文档翻译、背单词、广告等冗余。轻量约 1MB，零第三方依赖，纯系统框架，离线优先更省心。</p>
+      </details>
+      <details>
+        <summary>完全离线可以使用吗？</summary>
+        <p>可以。开启「仅离线」模式后，只使用 Apple 系统翻译，绝不联网。需 macOS 15+ 并下载对应 Apple 语言包。</p>
+      </details>
+      <details>
+        <summary>需要授予哪些系统权限？</summary>
+        <p>仅屏幕录制权限（截屏必需），无辅助功能、无网络权限要求。云引擎按需联网，API Key 安全存储在系统 Keychain。</p>
+      </details>
+      <details>
+        <summary>翻译质量如何保障？</summary>
+        <p>默认主引擎为智谱 GLM-5.2，配合 Apple/Google/DeepL 四重降级，单引擎 15 秒超时自动切换，翻译可靠有兜底。</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <p class="footer-brand">SnapTranslator</p>
+    <p>轻量级 macOS 截屏翻译应用 · 离线优先 · 纯系统框架</p>
+    <p class="footer-meta">Swift + SwiftUI/AppKit · Vision OCR · Translation 框架 · Carbon HotKey</p>
+  </div>
+</footer>
+
+<script>
+// SnapTranslator 产品官网交互脚本
+(function () {
+  "use strict";
+
+  // FAQ 手风琴：同时只展开一个
+  const details = document.querySelectorAll(".faq-list details");
+  details.forEach((d) => {
+    d.addEventListener("toggle", function () {
+      if (this.open) {
+        details.forEach((other) => {
+          if (other !== this) other.open = false;
+        });
+      }
+    });
+  });
+
+  // 导航滚动高亮当前区块
+  const sections = ["features", "engines", "install", "faq"];
+  const links = document.querySelectorAll(".nav-links a");
+  const spy = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          links.forEach((l) => {
+            l.style.color = l.getAttribute("href") === "#" + entry.target.id ? "#e7ecf5" : "";
+          });
+        }
+      });
+    },
+    { rootMargin: "-40% 0px -55% 0px" }
+  );
+  sections.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) spy.observe(el);
+  });
+
+  // 为 Code 块增加复制按钮
+  document.querySelectorAll(".code-block").forEach((block) => {
+    const btn = document.createElement("button");
+    btn.textContent = "复制";
+    btn.style.cssText =
+      "float:right;font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid #232d42;background:transparent;color:#8b96ab;cursor:pointer;";
+    btn.addEventListener("click", () => {
+      navigator.clipboard
+        .writeText(block.querySelector("code").innerText)
+        .then(() => {
+          btn.textContent = "已复制";
+          setTimeout(() => (btn.textContent = "复制"), 1500);
+        })
+        .catch(() => {});
+    });
+    block.style.display = "block";
+    block.style.clear = "both";
+    btn.style.margin = "0 0 8px 8px";
+    block.insertBefore(btn, block.firstChild);
+  });
+})();
+
+</script>
+</body>
+</html>
