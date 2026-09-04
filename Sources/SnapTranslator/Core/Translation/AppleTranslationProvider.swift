@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import Translation
 
@@ -19,14 +20,21 @@ final class TranslationAnchor: ObservableObject {
     /// 即使 source/target 相同（Configuration 相等），也能通过变化的值触发
     @Published private(set) var trigger: Int = 0
 
+    /// 请求串行化信号量：TranslationAnchor 同一时刻只能承载一个请求，
+    /// 并发请求（如实时翻译防抖到期时上一请求仍在进行）会互相覆盖导致 continuation 悬挂，
+    /// 表现为“第一次能翻译，继续输入就不翻译了”。这里用异步信号量把请求串行化。
+    private let requestSemaphore = AsyncSemaphore()
+
     /// 使用 identifier 构造 Locale.Language，兼容所有 BCP 47 格式（含 zh-Hans 等复合码）
     private static func localeLanguage(_ language: Language) -> Locale.Language {
         Locale.Language(identifier: language.rawValue)
     }
 
-    /// 翻译文本（source 传 nil 自动检测）
+    /// 翻译文本（source 传 nil 自动检测），并发请求自动排队串行执行
     func translate(_ text: String, from source: Language?, to target: Language) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
+        await requestSemaphore.acquire()
+        defer { requestSemaphore.release() }
+        return try await withCheckedThrowingContinuation { continuation in
             request = Request(
                 text: text,
                 source: source.map(Self.localeLanguage),
@@ -40,6 +48,8 @@ final class TranslationAnchor: ObservableObject {
 
     /// 触发语言包下载确认弹窗（需 macOS 15+，通过专用翻译锚点窗口触发）
     func prepareLanguages(source: Language?, target: Language) async throws {
+        await requestSemaphore.acquire()
+        defer { requestSemaphore.release() }
         _ = try await withCheckedThrowingContinuation { continuation in
             request = Request(
                 text: "",
@@ -152,5 +162,30 @@ final class AppleTranslationProvider: TranslationProviding {
 
     func translate(_ text: String, from source: Language?, to target: Language) async throws -> String {
         try await anchor.translate(text, from: source, to: target)
+    }
+}
+
+
+/// 异步信号量（许可数 1）：配合 TranslationAnchor 把并发请求串行化，
+/// 避免新请求覆盖未完成的旧请求导致 continuation 悬挂
+private actor AsyncSemaphore {
+    private var available = true
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if available {
+            available = false
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        if let next = waiters.first {
+            waiters.removeFirst()
+            next.resume()
+        } else {
+            available = true
+        }
     }
 }

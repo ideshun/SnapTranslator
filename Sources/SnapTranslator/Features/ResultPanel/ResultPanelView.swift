@@ -192,7 +192,8 @@ struct ResultPanelView: View {
                     paragraphSpacing: 4,
                     lineSpacing: 2,
                     onChange: { onLiveTranslate($0) },
-                    onSelectionChange: { model.leftSelectedText = $0 }
+                    onSelectionChange: { model.leftSelectedText = $0 },
+                    focusOnAppear: true
                 )
             }
             .frame(minWidth: 160)
