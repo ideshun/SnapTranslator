@@ -496,6 +496,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 model.providerName = provider
                 model.sourceLanguage = source
                 model.phase = .done
+            } catch is CancellationError {
+                // 请求被取消（防抖被新输入取代 / 锚点窗口隐藏清队），静默处理不打扰用户
+                return
             } catch {
                 guard generation == self.liveTranslateGeneration else { return }
                 model.phase = .failed("翻译失败：\(error.localizedDescription)")
@@ -536,8 +539,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         // 同步源文本（编辑视图已更新 model.sourceText，这里仅确保一致）
-        model.sourceText = text
-        // 源语言判定
+        // ⚠️ 注意：不要把 trim 后的文本回写 model.sourceText！编辑框在 textDidChange 里
+        // 已经用原始文本更新过 binding；若这里回写 trim 后的值，SwiftUI updateNSView 会
+        // 因 textView.string != text 触发 setAttributedString 全量重置，把刚输入的
+        // 行尾空格/回车换行「吃掉」（表现为空格和回车总是被清理）。
         let source = determineSourceLanguage(for: trimmed)
         // 若源语言与目标语言相同，自动切到英文
         let target = effectiveTargetLanguage(source: source)
@@ -581,12 +586,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 model.providerName = provider
                 model.sourceLanguage = source
                 model.collectNotice = ""
+            } catch is CancellationError {
+                // 请求被取消（被更新输入取代 / 锚点窗口隐藏清队），静默处理不打扰用户
+                return
             } catch {
                 guard generation == self.liveTranslateGeneration else { return }
                 model.translatedText = ""
-                model.collectNotice = "实时翻译失败"
+                // 带上具体原因，避免只显示「实时翻译失败」无法定位（如 Unable to Translate = 语向不支持/未装包）
+                model.collectNotice = "实时翻译失败：\(error.localizedDescription)"
                 Task { [weak model] in
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
                     model?.collectNotice = ""
                 }
             }
@@ -808,14 +817,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 例如用户默认目标为中文，截图中文内容时自动改为翻译到英文
     private func effectiveTargetLanguage(source: Language?) -> Language {
         let target = settings.targetLanguage
-        guard let source, source == target else { return target }
-        // 源语言 == 目标语言，自动切换到英文作为翻译目标
-        return .en
+        guard let source else { return target }
+        if source == target { return .en }
+        // 源与目标同为中文简繁变体也按退化处理：Apple 不支持 zh-Hant↔zh-Hans 互译
+        // （实测未装包直接抛 Unable to Translate），且简繁转换本就不是翻译需求，
+        // 自动切英文保证请求总能落到受支持且已装包的语向上。
+        let zhVariants: Set<Language> = [.zhHans, .zhHant]
+        if zhVariants.contains(source) && zhVariants.contains(target) { return .en }
+        return target
     }
 
-    /// 确定源语言：用户手动选择优先，未选择时自动检测
+    /// 确定源语言：用户手动选择优先，未选择时自动检测。
+    /// 例外：源提示与目标语言相同（X→X 退化配置）时提示无意义——此时自动检测真实文本语言
+    /// （检测失败才退回提示）。否则英文输入会被钉死的中文源按「中→英」翻英文原文，
+    /// Apple 引擎原样返回，表现为「输入内容不翻译」（实时与截图两条链路同坑）。
     private func determineSourceLanguage(for text: String) -> Language? {
         if let hint = settings.sourceHint {
+            if hint == settings.targetLanguage, let detected = LanguageDetector.detect(text) {
+                return detected
+            }
             return hint
         }
         return LanguageDetector.detect(text)

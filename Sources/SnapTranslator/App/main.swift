@@ -10,6 +10,14 @@ if CommandLine.arguments.contains("--self-test") {
     exit(failures)
 }
 
+// 翻译链路诊断模式：SnapTranslator --translate "文本" [--to <语言代码>]
+if CommandLine.arguments.contains("--translate") {
+    let code = MainActor.assumeIsolated {
+        TranslateDiag.run(arguments: CommandLine.arguments)
+    }
+    exit(code)
+}
+
 let app = NSApplication.shared
 let delegate = MainActor.assumeIsolated {
     AppDelegate()
