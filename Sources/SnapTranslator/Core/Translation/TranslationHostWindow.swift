@@ -60,7 +60,9 @@ final class TranslationHostWindowController {
     /// 隐藏锚点窗口
     func hide() {
         panel?.orderOut(nil)
-        anchor.cancelPending()
+        // 取消在途请求 + 清空等待队列：窗口不可见时 translationTask 不会触发，
+        // 请求只会白等并占用唯一槽位，导致后续请求全部排队挂起
+        anchor.cancelAll()
     }
 
     /// 触发语言包下载准备
