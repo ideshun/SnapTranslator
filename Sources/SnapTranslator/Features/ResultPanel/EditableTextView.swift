@@ -41,10 +41,11 @@ struct EditableTextView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         let coordinator = context.coordinator
-        // 首次 SwiftUI 更新时接管焦点（此时窗口已展示，编辑框已挂载）
+        // 出现后接管焦点：仅当焦点确实设置成功才消耗标记。
+        // 若首次 updateNSView 时视图尚未挂进窗口（window == nil）静默失败，
+        // 保留标记可借后续 SwiftUI 更新重试，否则面板永远失去自动聚焦。
         if focusOnAppear && !coordinator.didFocusOnAppear {
-            coordinator.didFocusOnAppear = true
-            coordinator.focus()
+            coordinator.didFocusOnAppear = coordinator.focus()
         }
         // 仅当外部传入的文本与当前编辑内容不同，且不在输入法拼音合成（marked text）期间才同步，
         // 避免 setAttributedString 重置 textStorage 打断中文等输入法的候选字。
@@ -89,11 +90,14 @@ struct EditableTextView: NSViewRepresentable {
         }
 
         /// 把窗口首响应者切到编辑框（激活应用以确保键盘事件可达）
-        func focus() {
-            guard let textView, let window = textView.window else { return }
+        /// - Returns: 焦点是否真正设置成功（供调用方决定是否保留重试标记）
+        @discardableResult
+        func focus() -> Bool {
+            guard let textView, let window = textView.window else { return false }
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
             window.makeFirstResponder(textView)
+            return window.firstResponder === textView
         }
 
         func textDidChange(_ notification: Notification) {

@@ -834,7 +834,17 @@ struct ResultPanelView: View {
                 .foregroundStyle(.secondary)
                 .help("选择源语言")
 
-                Text("→").foregroundStyle(.tertiary)
+                // 中间的交换按钮：点击交换源/目标语言并更新默认语向。
+                // 工具栏的交换按钮仅在 phase == .done 时显示，空闲输入态只有这里能交换。
+                Button {
+                    onSwapLanguages()
+                } label: {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.borderless)
+                .help("交换源语言/目标语言")
 
                 // 目标语言选择
                 Menu {

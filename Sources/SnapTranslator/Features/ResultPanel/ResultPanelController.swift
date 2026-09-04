@@ -125,6 +125,35 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
         // 会出现回车/空格/⌘C/⌘X 等按键被系统吞掉的问题
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        focusSourceEditor()
+    }
+
+    /// 面板每次展示后把焦点交给左侧原文编辑框（打开即可输入，无需先点一下）。
+    /// - 走控制器而非 SwiftUI：面板重开（orderOut→orderFront）不产生 SwiftUI 更新，
+    ///   EditableTextView 的一次性 focusOnAppear 机制不会再触发。
+    /// - 仅当当前无具体第一响应者（firstResponder 还是窗口本身）时才接管，
+    ///   避免抢走用户点击的目标控件。
+    private func focusSourceEditor() {
+        guard let panel else { return }
+        DispatchQueue.main.async { [weak panel] in
+            guard let panel, panel.isVisible else { return }
+            guard panel.firstResponder === panel else { return } // 已有焦点目标则不抢
+            guard let editor = Self.findEditableTextView(in: panel.contentView) else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeFirstResponder(editor)
+        }
+    }
+
+    /// 递归查找第一个可编辑的 NSTextView（翻译页签左侧原文编辑框）
+    private static func findEditableTextView(in view: NSView?) -> NSTextView? {
+        guard let view else { return nil }
+        if let textView = view as? NSTextView, textView.isEditable, textView.isSelectable {
+            return textView
+        }
+        for sub in view.subviews {
+            if let found = findEditableTextView(in: sub) { return found }
+        }
+        return nil
     }
 
     /// 应用设置中的默认窗口大小（仅在已有内容时生效，首次启动/清空后保持小尺寸）
