@@ -12,6 +12,8 @@ struct EditableTextView: NSViewRepresentable {
     var onChange: ((String) -> Void)?
     /// 选中文本变化回调（用于左侧朗读时优先朗读选中内容）
     var onSelectionChange: ((String) -> Void)?
+    /// 视图出现后是否自动聚焦（首次展示翻译页签时直接可输入）
+    var focusOnAppear: Bool = false
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -26,6 +28,7 @@ struct EditableTextView: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 12, height: 12)
         textView.delegate = context.coordinator
         applyStyleAndText(to: textView)
+        context.coordinator.textView = textView
 
         let scrollView = NSScrollView()
         scrollView.documentView = textView
@@ -38,6 +41,11 @@ struct EditableTextView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         let coordinator = context.coordinator
+        // 首次 SwiftUI 更新时接管焦点（此时窗口已展示，编辑框已挂载）
+        if focusOnAppear && !coordinator.didFocusOnAppear {
+            coordinator.didFocusOnAppear = true
+            coordinator.focus()
+        }
         // 仅当外部传入的文本与当前编辑内容不同，且不在输入法拼音合成（marked text）期间才同步，
         // 避免 setAttributedString 重置 textStorage 打断中文等输入法的候选字。
         if !textView.hasMarkedText() && textView.string != text {
@@ -71,9 +79,21 @@ struct EditableTextView: NSViewRepresentable {
         var parent: EditableTextView
         /// 标记当前是否为程序化同步文本，避免 setAttributedString 触发递归 onChange 干扰实时翻译
         var isProgrammatic = false
+        /// 弱引用编辑框，用于自动聚焦
+        weak var textView: NSTextView?
+        /// 是否已执行过出现时的自动聚焦
+        var didFocusOnAppear = false
 
         init(_ parent: EditableTextView) {
             self.parent = parent
+        }
+
+        /// 把窗口首响应者切到编辑框（激活应用以确保键盘事件可达）
+        func focus() {
+            guard let textView, let window = textView.window else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            window.makeFirstResponder(textView)
         }
 
         func textDidChange(_ notification: Notification) {

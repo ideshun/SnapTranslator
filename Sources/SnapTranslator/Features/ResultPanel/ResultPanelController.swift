@@ -121,6 +121,9 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
         if let rect {
             position(panel: panel, near: rect)
         }
+        // 激活应用并接管键盘焦点：非激活应用下的面板无法接收键盘输入，
+        // 会出现回车/空格/⌘C/⌘X 等按键被系统吞掉的问题
+        NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
     }
 

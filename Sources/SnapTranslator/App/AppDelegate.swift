@@ -164,6 +164,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         historyItem.target = self
         fileMenu.addItem(historyItem)
 
+        // 编辑菜单：提供标准的撤销/剪切/复制/粘贴/全选，
+        // 缺少该菜单时 ⌘X/⌘C/⌘V/⌘A 等快捷键在任何文本框内都不可用
+        let editMenuItem = NSMenuItem()
+        mainMenu.addItem(editMenuItem)
+        let editMenu = NSMenu(title: "编辑")
+        editMenuItem.submenu = editMenu
+
+        let editItems: [(String, Selector, String)] = [
+            ("撤销", Selector(("undo:")), "z"),
+            ("重做", Selector(("redo:")), "Z"),
+            ("剪切", #selector(NSText.cut(_:)), "x"),
+            ("复制", #selector(NSText.copy(_:)), "c"),
+            ("粘贴", #selector(NSText.paste(_:)), "v"),
+            ("全选", #selector(NSText.selectAll(_:)), "a"),
+        ]
+        for (index, (title, action, key)) in editItems.enumerated() {
+            if index == 2 {
+                editMenu.addItem(.separator())
+            }
+            editMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: key))
+        }
+
         // 窗口菜单
         let windowMenuItem = NSMenuItem()
         mainMenu.addItem(windowMenuItem)
