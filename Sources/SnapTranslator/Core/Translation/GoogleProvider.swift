@@ -3,6 +3,8 @@ import Foundation
 /// Google 免费翻译接口（非官方，零配置，作为离线引擎的兜底）
 struct GoogleProvider: TranslationProviding {
     let name = "Google"
+    /// 网络会话（可携带代理配置）
+    var session: URLSession = .shared
 
     var isAvailable: Bool { true }
 
@@ -18,7 +20,7 @@ struct GoogleProvider: TranslationProviding {
         guard let url = components?.url else {
             throw URLError(.badURL)
         }
-        let (data, _) = try await URLSession.shared.data(from: url)
+        let (data, _) = try await session.data(from: url)
         guard let result = Self.parse(data), !result.isEmpty else {
             throw TranslationError.emptyResponse
         }

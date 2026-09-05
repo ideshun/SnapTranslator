@@ -205,7 +205,7 @@ private struct AnchorSessionView: View {
         return AppleTranslationError(message:
             "语向 \(displayName(of: source)) → \(displayName(of: target)) 不被 Apple 离线翻译支持或语言包未安装；"
             + "请在「设置 → 引擎」打开系统翻译语言设置下载语言包、更换目标语言，"
-            + "或把主引擎从「仅离线（纯本地，永不联网）」切换为「自动（离线优先）」以启用在线引擎回退"
+            + "或把主引擎切换为「自动」以启用在线引擎回退"
         )
     }
 

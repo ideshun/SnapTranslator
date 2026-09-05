@@ -10,6 +10,7 @@ struct TranslationService {
         var openaiAPIKey: String
         var deeplAPIKey: String
         var anchor: TranslationAnchor?
+        var proxy: EngineProxySettings? = nil
     }
 
     private let config: Config
@@ -25,11 +26,6 @@ struct TranslationService {
         // 源语言与目标语言相同：直接返回原文，不做无意义的翻译
         if let source, source == target {
             return (text, "无需翻译")
-        }
-
-        // 仅离线模式下 Apple 翻译不可用（系统 < macOS 15）时，直接给出明确错误，绝不联网
-        if config.primary == .offline && !supportsOfflineApple {
-            throw TranslationError.noOfflineEngine
         }
 
         for provider in providers {
@@ -62,14 +58,16 @@ struct TranslationService {
     /// 按主引擎策略排列引擎顺序（主引擎优先，其余作为降级链）
     private var providers: [TranslationProviding] {
         var ordered: [TranslationProviding] = []
+        let session = EngineProxySettings.makeSession(config.proxy)
 
         let openai = OpenAICompatProvider(
             baseURL: config.openaiBaseURL,
             model: config.openaiModel,
-            apiKey: config.openaiAPIKey
+            apiKey: config.openaiAPIKey,
+            session: session
         )
-        let deepl = DeepLProvider(apiKey: config.deeplAPIKey)
-        let google = GoogleProvider()
+        let deepl = DeepLProvider(apiKey: config.deeplAPIKey, session: session)
+        let google = GoogleProvider(session: session)
         var apple: TranslationProviding?
         if #available(macOS 15.0, *), let anchor = config.anchor {
             apple = AppleTranslationProvider(anchor: anchor)
@@ -82,17 +80,15 @@ struct TranslationService {
         }
 
         switch config.primary {
-        case .offline:
-            // 仅离线：只用 Apple 本地翻译，绝不降级到任何网络引擎
-            push(apple)
         case .auto:
-            // 离线优先：Apple → GLM5.2（OpenAI兼容，若已配置）→ Google → DeepL
-            // 智谱 AI 在国内可用，优先于 Google
-            push(apple)
+            // 自动：已配置 Key 的云模型优先（isAvailable 要求 Key 非空，未配置自动跳过）
+            // → Google（免费）→ Apple 离线 → DeepL
             push(openai)
             push(google)
+            push(apple)
             push(deepl)
         case .apple:
+            // Apple 离线翻译优先，失败后自动降级到云引擎
             push(apple)
             push(openai)
             push(google)

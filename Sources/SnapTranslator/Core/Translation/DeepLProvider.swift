@@ -7,9 +7,12 @@ struct DeepLProvider: TranslationProviding {
     private let apiKey: String
     /// Free Key 走 api-free 域名，Pro Key 走 api.deepl.com
     private let endpoint: URL
+    /// 网络会话（可携带代理配置）
+    var session: URLSession = .shared
 
-    init(apiKey: String) {
+    init(apiKey: String, session: URLSession = .shared) {
         self.apiKey = apiKey
+        self.session = session
         let host = apiKey.lowercased().hasSuffix(":fx") ? "api-free.deepl.com" : "api.deepl.com"
         self.endpoint = URL(string: "https://\(host)/v2/translate")!
     }
@@ -38,7 +41,7 @@ struct DeepLProvider: TranslationProviding {
             .joined(separator: "&")
         request.httpBody = Data(body.utf8)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw TranslationError.allFailed(["DeepL HTTP \(http.statusCode)"])
         }

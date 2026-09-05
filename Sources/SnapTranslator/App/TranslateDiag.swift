@@ -69,7 +69,8 @@ enum TranslateDiag {
                 openaiModel: settings.openaiModel,
                 openaiAPIKey: settings.openaiAPIKey,
                 deeplAPIKey: settings.deeplAPIKey,
-                anchor: host.anchor
+                anchor: host.anchor,
+                proxy: settings.engineProxy
             )
         )
 

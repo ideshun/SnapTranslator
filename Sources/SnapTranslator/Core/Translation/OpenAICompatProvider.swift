@@ -2,13 +2,15 @@ import Foundation
 
 /// OpenAI 兼容接口：可指向 OpenAI / 智谱 AI / new-api / OpenRouter 等任意兼容端点
 struct OpenAICompatProvider: TranslationProviding {
-    let name = "GLM5.2"
+    let name = "智谱 AI"
 
     private let baseURL: URL
     private let model: String
     private let apiKey: String
+    /// 网络会话（可携带代理配置）
+    var session: URLSession = .shared
 
-    init(baseURL: String, model: String, apiKey: String) {
+    init(baseURL: String, model: String, apiKey: String, session: URLSession = .shared) {
         // 归一化：去尾部斜杠后拼接 chat/completions
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/$", with: "", options: .regularExpression)
@@ -16,6 +18,7 @@ struct OpenAICompatProvider: TranslationProviding {
         self.baseURL = URL(string: normalized) ?? URL(string: "https://open.bigmodel.cn/api/paas/v4/chat/completions")!
         self.model = model
         self.apiKey = apiKey
+        self.session = session
     }
 
     var isAvailable: Bool { !apiKey.isEmpty && !model.isEmpty }
@@ -39,11 +42,11 @@ struct OpenAICompatProvider: TranslationProviding {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             // 尝试解析错误响应中的 message 字段
             let errMsg = Self.parseErrorMessage(data) ?? "HTTP \(http.statusCode)"
-            throw NSError(domain: "GLM5.2", code: http.statusCode,
+            throw NSError(domain: "OpenAICompat", code: http.statusCode,
                           userInfo: [NSLocalizedDescriptionKey: "\(model) 请求失败：\(errMsg)"])
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

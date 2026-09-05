@@ -10,7 +10,6 @@ protocol TranslationProviding {
 /// 主引擎选择策略
 enum PrimaryEngine: String, CaseIterable, Codable, Identifiable {
     case auto
-    case offline
     case apple
     case openai
     case deepl
@@ -20,13 +19,39 @@ enum PrimaryEngine: String, CaseIterable, Codable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .auto: return "自动（离线优先）"
-        case .offline: return "仅离线（纯本地，永不联网）"
-        case .apple: return "Apple 系统翻译（离线）"
-        case .openai: return "智谱 AI GLM5.2"
+        case .auto: return "自动（AI 模型 > Google > 本地）"
+        case .apple: return "Apple 系统翻译（本地离线优先）"
+        case .openai: return "智谱 AI"
         case .deepl: return "DeepL"
         case .google: return "Google（免费）"
         }
+    }
+}
+
+/// 云引擎代理设置：仅作用于在线翻译的 URLSession，Apple 离线翻译不受影响
+struct EngineProxySettings: Equatable {
+    var enabled: Bool = false
+    var host: String = "127.0.0.1"
+    var port: Int?
+
+    var isValid: Bool {
+        enabled && !host.isEmpty && (port ?? 0) > 0 && (port ?? 0) <= 65535
+    }
+
+    /// 按设置生成 URLSession；未启用/无效时返回共享会话
+    static func makeSession(_ settings: EngineProxySettings?) -> URLSession {
+        guard let settings, settings.isValid else { return .shared }
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 20
+        config.connectionProxyDictionary = [
+            kCFNetworkProxiesHTTPEnable as String: true,
+            kCFNetworkProxiesHTTPProxy as String: settings.host,
+            kCFNetworkProxiesHTTPPort as String: settings.port!,
+            kCFNetworkProxiesHTTPSEnable as String: true,
+            kCFNetworkProxiesHTTPSProxy as String: settings.host,
+            kCFNetworkProxiesHTTPSPort as String: settings.port!,
+        ]
+        return URLSession(configuration: config)
     }
 }
 
@@ -34,19 +59,16 @@ enum TranslationError: LocalizedError {
     case allFailed([String])
     case timeout
     case emptyResponse
-    case noOfflineEngine
 
     var errorDescription: String? {
         switch self {
         case .allFailed(let errors):
             let detail = errors.joined(separator: "；")
-            return "全部引擎失败：\(detail)\n\n建议：\n1. 在设置 → 引擎中点「下载 Apple 翻译语言包」确保本地离线翻译可用\n2. 在设置 → 引擎中填入智谱 AI API Key 使用 GLM5.2 在线翻译\n3. 确认网络连接正常后重试"
+            return "全部引擎失败：\(detail)\n\n建议：\n1. 在设置 → 引擎中点「下载 Apple 翻译语言包」确保本地离线翻译可用\n2. 在设置 → 引擎中填入智谱 AI API Key 使用云引擎在线翻译\n3. 确认网络连接正常（或在设置中配置代理）后重试"
         case .timeout:
             return "请求超时（15秒），请检查网络连接后重试"
         case .emptyResponse:
             return "引擎返回了空结果，可能是源语言与目标语言相同或文本内容不支持翻译"
-        case .noOfflineEngine:
-            return "当前系统不支持 Apple 离线翻译（需 macOS 15+ 并在设置中下载语言包），且「仅离线」模式拒绝联网翻译。请在设置中切换引擎或下载 Apple 语言包。"
         }
     }
 }
