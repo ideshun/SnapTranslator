@@ -48,6 +48,8 @@ struct ResultPanelView: View {
             .frame(width: 240)
             .disabled(!(model.phase == .done || model.phase == .idle))
             .labelsHidden()
+            // 分段控件自带内边距，用负 padding 把 tab 视觉上贴近窗口左缘
+            .padding(.leading, -6)
 
             Spacer()
 
@@ -90,17 +92,12 @@ struct ResultPanelView: View {
             }
             .help(settings.alwaysOnTop ? "取消置顶" : "置顶窗口")
 
-            if model.phase == .done {
-                Button(action: onSwapLanguages) {
-                    Image(systemName: "arrow.left.arrow.right")
-                }
-                .help("交换源语言/目标语言并重新翻译")
+            // 重试：随时可点，对当前截图重跑 OCR + 翻译
+            Button(action: onRetry) {
+                Image(systemName: "arrow.clockwise")
             }
-
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-            }
-            .help("关闭（窗口）")
+            .help("重新识别/翻译（对当前内容重跑识别与翻译）")
+            .disabled(model.image == nil && model.sourceText.isEmpty)
         }
         // tab 区域左边缘不留额外间距，紧凑对齐
         .padding(.leading, 0)
@@ -391,8 +388,12 @@ struct ResultPanelView: View {
                 if let image = model.image, !model.translatedText.isEmpty {
                     oneToOneView(image: image, translation: model.translatedText, ocrLines: model.ocrLines)
                 } else if let image = model.image {
-                    InteractiveImageView(image: image, scale: $imageScale)
-                        .frame(minWidth: 160)
+                    InteractiveImageView(
+                        image: image,
+                        scale: $imageScale,
+                        fitsToViewport: settings.screenshotDisplayMode == .adaptiveWidth
+                    )
+                    .frame(minWidth: 160)
                 }
             }
         }
@@ -534,12 +535,20 @@ struct ResultPanelView: View {
             translation: translation,
             ocrLines: ocrLines
         ) {
-            InteractiveImageView(image: coveredImage, scale: $imageScale)
-                .frame(minWidth: 160)
+            InteractiveImageView(
+                image: coveredImage,
+                scale: $imageScale,
+                fitsToViewport: settings.screenshotDisplayMode == .adaptiveWidth
+            )
+            .frame(minWidth: 160)
         } else {
             // 无 OCR 位置信息时兜底：直接显示原图
-            InteractiveImageView(image: image, scale: $imageScale)
-                .frame(minWidth: 160)
+            InteractiveImageView(
+                image: image,
+                scale: $imageScale,
+                fitsToViewport: settings.screenshotDisplayMode == .adaptiveWidth
+            )
+            .frame(minWidth: 160)
         }
     }
 
@@ -808,6 +817,25 @@ struct ResultPanelView: View {
         model.phase == .done || (model.phase == .idle && model.tab == .translation)
     }
 
+    /// 可切换的引擎列表：云引擎需已配置 API Key，否则不显示
+    private var switchableEngines: [PrimaryEngine] {
+        PrimaryEngine.allCases.filter { engine in
+            switch engine {
+            case .openai: return !settings.openaiAPIKey.isEmpty
+            case .deepl: return !settings.deeplAPIKey.isEmpty
+            default: return true
+            }
+        }
+    }
+
+    /// 状态栏显示的引擎名：临时覆盖 > 实际使用的引擎 > 设置的主引擎
+    private var engineDisplayName: String {
+        if let override = model.engineOverride {
+            return override.displayName
+        }
+        return model.providerName.isEmpty ? settings.primaryEngine.displayName : model.providerName
+    }
+
     private var statusBar: some View {
         HStack(spacing: 8) {
             if showLanguageBar {
@@ -863,9 +891,30 @@ struct ResultPanelView: View {
                 .foregroundStyle(.secondary)
                 .help("选择目标语言")
 
-                if !model.providerName.isEmpty {
-                    Text("· \(model.providerName)").foregroundStyle(.secondary)
+                // 引擎切换菜单：未配置 API Key 的云引擎不显示。
+                // 选择仅对本面板后续翻译生效（临时覆盖），不改设置里的主引擎。
+                Menu {
+                    Button {
+                        model.engineOverride = nil
+                    } label: {
+                        Text(model.engineOverride == nil ? "✓ 跟随主引擎设置" : "跟随主引擎设置")
+                    }
+                    Divider()
+                    ForEach(switchableEngines) { engine in
+                        Button {
+                            model.engineOverride = engine
+                        } label: {
+                            Text(model.engineOverride == engine ? "✓ \(engine.displayName)" : engine.displayName)
+                        }
+                    }
+                } label: {
+                    Text("· \(engineDisplayName)")
                 }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .foregroundStyle(.secondary)
+                .help("切换翻译引擎（仅对当前面板生效，不改设置中的主引擎）")
 
                 // 清空按钮：一键清空左侧内容
                 Button {

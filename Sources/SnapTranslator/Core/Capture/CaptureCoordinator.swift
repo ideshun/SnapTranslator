@@ -8,6 +8,8 @@ final class CaptureCoordinator {
 
     var onCaptured: ((NSImage, CGRect) -> Void)?
     var onPermissionDenied: (() -> Void)?
+    /// 用户取消框选（Esc / 右键）时回调，供上层恢复被隐藏的翻译面板
+    var onCancelled: (() -> Void)?
 
     private static let lastRectKey = "st.lastCaptureRect"
 
@@ -44,6 +46,7 @@ final class CaptureCoordinator {
 
     func cancel() {
         teardownOverlays()
+        onCancelled?()
     }
 
     private func finishSelection(rect: CGRect) {

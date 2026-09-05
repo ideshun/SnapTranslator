@@ -59,6 +59,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         captureCoordinator.onPermissionDenied = { [weak self] in
             self?.notifyPermissionDenied()
         }
+        captureCoordinator.onCancelled = { [weak self] in
+            // 取消框选时恢复截屏前隐藏的面板
+            guard let self, self.didHidePanelForCapture else { return }
+            self.didHidePanelForCapture = false
+            self.panelController.show(near: nil)
+        }
 
         // 激活应用，确保菜单栏图标和菜单立即可见
         NSApp.activate(ignoringOtherApps: true)
@@ -467,12 +473,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         translationHost.show()
         let service = TranslationService(
             config: .init(
-                primary: settings.primaryEngine,
+                primary: model.engineOverride ?? settings.primaryEngine,
                 openaiBaseURL: settings.openaiBaseURL,
                 openaiModel: settings.openaiModel,
                 openaiAPIKey: settings.openaiAPIKey,
                 deeplAPIKey: settings.deeplAPIKey,
-                anchor: translationHost.anchor
+                anchor: translationHost.anchor,
+                proxy: settings.engineProxy
             )
         )
         Task { [weak self, weak model] in
@@ -555,12 +562,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         translationHost.show()
         let service = TranslationService(
             config: .init(
-                primary: settings.primaryEngine,
+                primary: model.engineOverride ?? settings.primaryEngine,
                 openaiBaseURL: settings.openaiBaseURL,
                 openaiModel: settings.openaiModel,
                 openaiAPIKey: settings.openaiAPIKey,
                 deeplAPIKey: settings.deeplAPIKey,
-                anchor: translationHost.anchor
+                anchor: translationHost.anchor,
+                proxy: settings.engineProxy
             )
         )
         Task { [weak self, weak model] in
@@ -631,6 +639,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             model?.collectNotice = ""
         }
+
+        // 自动重新翻译：核心场景是「自动识别语言有误时纠正语向」——
+        // 保留原识别文本不变，按交换后的新目标语言重新翻译；
+        // 不是把译文当新原文反向对换。原文未变，OCR 行位置信息仍然有效。
+        guard !model.sourceText.isEmpty else { return }
+        if model.phase == .idle {
+            // 输入页签：走实时翻译路径，保持可编辑状态
+            performDirectTranslate(text: model.sourceText)
+        } else {
+            reTranslateCurrent()
+        }
     }
 
     // MARK: - 生命周期
@@ -657,14 +676,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = buildMenu()
     }
 
+    /// 截屏前是否隐藏过面板（用于取消框选时判断是否恢复）
+    private var didHidePanelForCapture = false
+
     @objc private func startCapture() {
+        // 设置开启且面板可见时先隐藏，避免面板出现在截图中；
+        // 取消框选由 onCancelled 恢复，截屏成功由 handleCaptured 重新展示
+        if settings.hideWindowOnCapture, panelController.isVisible {
+            panelController.hide()
+            didHidePanelForCapture = true
+        } else {
+            didHidePanelForCapture = false
+        }
         captureCoordinator.begin()
     }
 
     @objc private func recaptureLastRegion() {
         guard let rect = CaptureCoordinator.adjustedLastRect() else {
-            captureCoordinator.begin()
+            startCapture()
             return
+        }
+        // 立即重截（无框选、无取消路径），同样先隐藏面板避免入镜
+        if settings.hideWindowOnCapture, panelController.isVisible {
+            panelController.hide()
         }
         captureCoordinator.capture(rect: rect)
     }
@@ -728,7 +762,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 openaiModel: settings.openaiModel,
                 openaiAPIKey: settings.openaiAPIKey,
                 deeplAPIKey: settings.deeplAPIKey,
-                anchor: translationHost.anchor
+                anchor: translationHost.anchor,
+                proxy: settings.engineProxy
             )
         )
         do {
@@ -779,11 +814,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 核心流程
 
     private func handleCaptured(image: NSImage, rect: CGRect) {
+        didHidePanelForCapture = false
         lastRequest = (image, "", [])
         let model = panelController.model
+        model.defaultDoneTab = settings.defaultDoneTab
         model.begin(image: image, target: settings.targetLanguage)
         panelController.show(near: rect)
 
+        recognizeAndTranslate(image: image, preserveTab: false, addHistory: true)
+    }
+
+    /// 对指定截图重跑 OCR 并翻译（截屏与「重新识别/翻译」重试共用）
+    private func recognizeAndTranslate(image: NSImage, preserveTab: Bool, addHistory: Bool) {
+        let model = panelController.model
+        model.phase = .recognizing
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -797,7 +841,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let ocrLines = result.lines.map { (text: $0.text, rect: $0.boundingBox) }
                 model.recognized(text: result.fullText, lines: ocrLines)
                 self.lastRequest = (image, result.fullText, ocrLines)
-                self.translate(text: result.fullText, image: image, model: model)
+                self.translate(
+                    text: result.fullText,
+                    image: image,
+                    model: model,
+                    preserveTab: preserveTab,
+                    addHistory: addHistory
+                )
             } catch {
                 model.failed("OCR 失败：\(error.localizedDescription)")
             }
@@ -841,15 +891,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return LanguageDetector.detect(text)
     }
 
+    /// 工具栏「重新识别/翻译」：对上次截图重跑 OCR + 翻译，可随时点击
     private func retryTranslation() {
-        guard let last = lastRequest, !last.sourceText.isEmpty else {
+        guard let last = lastRequest else {
             panelController.show(near: nil)
             return
         }
-        let model = panelController.model
-        model.recognized(text: last.sourceText, lines: last.ocrLines)
         panelController.show(near: nil)
-        translate(text: last.sourceText, image: last.image, model: model)
+        recognizeAndTranslate(image: last.image, preserveTab: true, addHistory: false)
     }
 
     private func translate(
@@ -872,12 +921,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let service = TranslationService(
             config: .init(
-                primary: settings.primaryEngine,
+                primary: model.engineOverride ?? settings.primaryEngine,
                 openaiBaseURL: settings.openaiBaseURL,
                 openaiModel: settings.openaiModel,
                 openaiAPIKey: settings.openaiAPIKey,
                 deeplAPIKey: settings.deeplAPIKey,
-                anchor: translationHost.anchor
+                anchor: translationHost.anchor,
+                proxy: settings.engineProxy
             )
         )
         // 更新面板中的实际目标语言（可能已被 effectiveTargetLanguage 自动调整）

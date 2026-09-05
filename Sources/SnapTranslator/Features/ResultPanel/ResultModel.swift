@@ -16,7 +16,7 @@ final class ResultModel: ObservableObject {
         case recognize = "识别"
         case translation = "翻译"
         case sideBySide = "对照"
-        case oneToOne = "1:1"
+        case oneToOne = "对比"
 
         var id: String { rawValue }
     }
@@ -30,6 +30,9 @@ final class ResultModel: ObservableObject {
     @Published var sourceLanguage: Language?
     @Published var targetLanguage: Language = .zhHans
     @Published var providerName = ""
+    /// 面板级临时引擎覆盖（左下角切换）：仅影响本面板后续翻译，不改设置里的主引擎；
+    /// nil 表示跟随设置
+    @Published var engineOverride: PrimaryEngine?
     /// 右侧文本选区（供收藏按钮），非空时工具条显示「收藏选中」
     @Published var selectedText = ""
     /// 左侧文本选区（供左侧朗读时优先朗读选中内容）
@@ -76,9 +79,12 @@ final class ResultModel: ObservableObject {
         phase = .translating
     }
 
+    /// 翻译完成后默认聚焦的页签（由设置页配置，AppDelegate 在截屏入口同步）
+    var defaultDoneTab: Tab = .oneToOne
+
     /// 翻译完成回调
     /// - Parameters:
-    ///   - preserveTab: 是否保留当前 tab（用于语言切换后的重新翻译），默认 false 切换到 1:1
+    ///   - preserveTab: 是否保留当前 tab（用于语言切换后的重新翻译），默认 false 切换到默认页签
     ///   - addHistory: 是否记录历史，默认 true
     func finished(
         translation: String,
@@ -92,8 +98,8 @@ final class ResultModel: ObservableObject {
         sourceLanguage = source
         phase = .done
         if !preserveTab {
-            // 翻译完成后默认聚焦 1:1 页签（左原图 + 右译文覆盖）
-            tab = .oneToOne
+            // 翻译完成后聚焦默认页签（设置里可配，默认「对比」）
+            tab = defaultDoneTab
         }
 
         // 记录识别历史
@@ -122,6 +128,7 @@ final class ResultModel: ObservableObject {
         translatedText = ""
         sourceLanguage = nil
         providerName = ""
+        engineOverride = nil
         selectedText = ""
         leftSelectedText = ""
         collectNotice = ""
