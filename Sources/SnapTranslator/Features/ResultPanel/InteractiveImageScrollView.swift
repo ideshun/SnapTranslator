@@ -18,6 +18,16 @@ final class InteractiveImageScrollView: NSScrollView {
     }
     var onScaleChanged: ((CGFloat) -> Void)?
 
+    /// true：缩放 1.0 时图片适配可视区（自适应宽度模式，现有行为）
+    /// false：缩放 1.0 时图片按原始尺寸显示（原图模式）
+    var fitsToViewport = true {
+        didSet {
+            guard fitsToViewport != oldValue else { return }
+            needsLayout = true
+            layoutSubtreeIfNeeded()
+        }
+    }
+
     private let imageView = NSImageView()
     let containerView = PanContainerView()
 
@@ -96,8 +106,10 @@ final class InteractiveImageScrollView: NSScrollView {
         let availW = max(clipSize.width - 16, 50)
         let availH = max(clipSize.height - 16, 50)
 
-        // 1.0 缩放时：图片适配可视区（保持比例）
-        let baseScale = min(1.0, availW / baseSize.width, availH / baseSize.height)
+        // 自适应模式：1.0 缩放时图片适配可视区（保持比例）；原图模式：1.0 即原始尺寸
+        let baseScale = fitsToViewport
+            ? min(1.0, availW / baseSize.width, availH / baseSize.height)
+            : 1.0
         let displayW = baseSize.width * baseScale * imageScale
         let displayH = baseSize.height * baseScale * imageScale
 
@@ -231,11 +243,14 @@ final class PanContainerView: NSView {
 struct InteractiveImageView: NSViewRepresentable {
     let image: NSImage
     @Binding var scale: CGFloat
+    /// 自适应宽度（true）或原图（false）
+    var fitsToViewport: Bool = true
 
     func makeNSView(context: Context) -> InteractiveImageScrollView {
         let view = InteractiveImageScrollView()
         view.displayImage = image
         view.imageScale = scale
+        view.fitsToViewport = fitsToViewport
         view.onScaleChanged = { newScale in
             DispatchQueue.main.async {
                 scale = newScale
@@ -247,6 +262,9 @@ struct InteractiveImageView: NSViewRepresentable {
     func updateNSView(_ nsView: InteractiveImageScrollView, context: Context) {
         if nsView.displayImage !== image {
             nsView.displayImage = image
+        }
+        if nsView.fitsToViewport != fitsToViewport {
+            nsView.fitsToViewport = fitsToViewport
         }
         if abs(nsView.imageScale - scale) > 0.001 {
             nsView.setImageScale(scale)

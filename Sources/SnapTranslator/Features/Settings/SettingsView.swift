@@ -14,7 +14,7 @@ struct SettingsView: View {
             engineTab
                 .tabItem { Label("引擎", systemImage: "globe") }
         }
-        .frame(width: 480, height: 480)
+        .frame(width: 480, height: 560)
     }
 
     private var generalTab: some View {
@@ -48,16 +48,33 @@ struct SettingsView: View {
             }
             Toggle("登录时自动启动", isOn: $settings.launchAtLogin)
 
-            // 识别历史设置
-            HStack {
-                Picker("保存最近识别次数", selection: $settings.historyLimit) {
-                    Text("不保存").tag(0)
-                    Text("5 次").tag(5)
-                    Text("10 次").tag(10)
-                    Text("20 次").tag(20)
-                    Text("50 次").tag(50)
+            // 截图显示方式
+            Picker("截图显示方式", selection: $settings.screenshotDisplayMode) {
+                ForEach(ScreenshotDisplayMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
                 }
-                .frame(width: 200)
+            }
+
+            // 截图翻译完成后默认聚焦的页签
+            Picker("完成后默认页签", selection: $settings.defaultDoneTab) {
+                ForEach(ResultModel.Tab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+
+            // 截屏时隐藏面板，避免面板入镜
+            Toggle("截屏时隐藏窗口", isOn: $settings.hideWindowOnCapture)
+
+            // 识别历史设置
+            Picker("保存最近识别次数", selection: $settings.historyLimit) {
+                Text("不保存").tag(0)
+                Text("5 次").tag(5)
+                Text("10 次").tag(10)
+                Text("20 次").tag(20)
+                Text("50 次").tag(50)
+                Text("80 次").tag(80)
+                Text("180 次").tag(180)
+                Text("280 次").tag(280)
             }
         }
         .formStyle(.grouped)
@@ -93,13 +110,67 @@ struct SettingsView: View {
                     Text(engine.displayName).tag(engine)
                 }
             }
-            Section("智谱 AI GLM5.2") {
-                TextField("Base URL（默认 https://open.bigmodel.cn/api/paas/v4）", text: $settings.openaiBaseURL)
-                TextField("模型（默认 glm-5.2）", text: $settings.openaiModel)
-                SecureField("API Key（open.bigmodel.cn 获取）", text: $settings.openaiAPIKey)
+
+            // 模型 Key 配置：仅当前主引擎对应分区显示；配置过的 Key 切走后仍保存在
+            // Keychain/UserDefaults，切回来自动恢复
+            if settings.primaryEngine == .openai {
+                Section {
+                    TextField("Base URL", text: $settings.openaiBaseURL)
+                    TextField("模型", text: $settings.openaiModel)
+                    SecureField("API Key", text: $settings.openaiAPIKey)
+                    Text("API Key 在智谱开放平台 [open.bigmodel.cn](https://open.bigmodel.cn) 获取，点击链接直达。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                } header: {
+                    HStack {
+                        Text("智谱 AI")
+                        Spacer()
+                        Button {
+                            settings.openaiBaseURL = SettingsStore.defaultOpenAIBaseURL
+                            settings.openaiModel = SettingsStore.defaultOpenAIModel
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.borderless)
+                        .help("恢复默认 Base URL 与模型（\(SettingsStore.defaultOpenAIModel)）")
+                    }
+                }
             }
-            Section("DeepL") {
-                SecureField("API Key（Free 档以 :fx 结尾）", text: $settings.deeplAPIKey)
+            if settings.primaryEngine == .deepl {
+                Section("DeepL") {
+                    SecureField("API Key", text: $settings.deeplAPIKey)
+                    Text("API Key 在 [deepl.com](https://www.deepl.com) 获取，点击链接直达；Free 档 Key 以 :fx 结尾。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Section {
+                TextField("主机", text: $settings.proxyHost)
+                    .disabled(!settings.proxyEnabled)
+                TextField("端口", text: $settings.proxyPort)
+                    .disabled(!settings.proxyEnabled)
+                Text("仅对在线引擎（智谱 AI/Google/DeepL）生效，支持 HTTP 代理。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            } header: {
+                HStack {
+                    Text("网络代理")
+                    Spacer()
+                    Button {
+                        settings.proxyHost = SettingsStore.defaultProxyHost
+                        settings.proxyPort = SettingsStore.defaultProxyPort
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("恢复默认主机与端口（\(SettingsStore.defaultProxyHost):\(SettingsStore.defaultProxyPort)）")
+                    Toggle("", isOn: $settings.proxyEnabled)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .help("启用/停用云引擎代理")
+                }
             }
             Section {
                 HStack {
@@ -108,7 +179,7 @@ struct SettingsView: View {
                     }
                     .help("调起系统设置 → 通用 → 翻译 界面，手动下载离线翻译语言包")
                 }
-                Text("Apple 系统翻译完全离线，需 macOS 15+。点击按钮会打开系统「翻译」语言设置界面，在系统设置中下载所需语言包。翻译时若语言包未就绪会自动触发准备。「仅离线」模式只使用本地 Apple 翻译，永不联网；其余模式在 Apple 不可用或失败时会自动降级到云引擎（智谱 AI/Google/DeepL，需联网）。")
+                Text("Apple 系统翻译完全离线，需 MacOS 15+。点击按钮会打开系统「翻译」语言设置界面，在系统设置中下载所需语言包。翻译时若语言包未就绪会自动触发准备。该引擎失败时会自动降级到云引擎（智谱 AI/Google/DeepL，需联网）。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
