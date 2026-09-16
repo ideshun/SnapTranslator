@@ -46,4 +46,16 @@ codesign --verify --verbose "$APP"
 
 SIZE=$(du -sh "$APP" | cut -f1)
 echo "完成：${APP}（${SIZE}）"
-echo "安装：cp -R ${APP} /Applications/ && open /Applications/SnapTranslator.app"
+
+# --install：真正安装到 /Applications 并重启应用；缺省仅打包提示
+if [[ "${1:-}" == "--install" ]]; then
+    echo "==> 安装到 /Applications"
+    pkill -x SnapTranslator 2>/dev/null || true
+    sleep 1
+    rm -rf /Applications/SnapTranslator.app
+    cp -R "$APP" /Applications/
+    open /Applications/SnapTranslator.app
+    echo "已安装并启动 /Applications/SnapTranslator.app"
+else
+    echo "安装：bash make-app.sh --install（或手动 cp -R ${APP} /Applications/ && open /Applications/SnapTranslator.app）"
+fi
