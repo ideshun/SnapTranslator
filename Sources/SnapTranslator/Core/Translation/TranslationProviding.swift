@@ -26,6 +26,17 @@ enum PrimaryEngine: String, CaseIterable, Codable, Identifiable {
         case .google: return "Google（免费）"
         }
     }
+
+    /// 状态栏等紧凑位置用的短名：完整 displayName 过长，会被截断显示不全
+    var shortName: String {
+        switch self {
+        case .auto: return "自动"
+        case .apple: return "Apple 本地"
+        case .openai: return "智谱 AI"
+        case .deepl: return "DeepL"
+        case .google: return "Google"
+        }
+    }
 }
 
 /// 云引擎代理设置：仅作用于在线翻译的 URLSession，Apple 离线翻译不受影响
@@ -75,3 +86,30 @@ enum TranslationError: LocalizedError {
 
 /// 单个引擎调用超时秒数
 let engineTimeoutSeconds: Double = 15
+
+/// 引擎熔断：某引擎失败后短时间内直接跳过，避免自动链每次翻译都先等它
+/// 超时/报错（实测 Google 被 429 限流时每次白等 ~1.5s 才轮到下一个引擎）
+enum EngineBreaker {
+    /// 熔断冷却时长
+    static let cooldown: TimeInterval = 90
+
+    private static let lock = NSLock()
+    private static var blockedUntil: [String: Date] = [:]
+
+    /// 该引擎是否处于熔断期
+    static func isBlocked(_ name: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let until = blockedUntil[name] else { return false }
+        if until < Date() {
+            blockedUntil[name] = nil
+            return false
+        }
+        return true
+    }
+
+    /// 记录一次失败，进入冷却期
+    static func recordFailure(_ name: String) {
+        lock.lock(); defer { lock.unlock() }
+        blockedUntil[name] = Date().addingTimeInterval(cooldown)
+    }
+}

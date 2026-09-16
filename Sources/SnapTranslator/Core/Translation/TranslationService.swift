@@ -19,28 +19,47 @@ struct TranslationService {
         self.config = config
     }
 
-    /// 翻译并返回（译文, 引擎名），全部引擎失败时抛错
-    func translate(_ text: String, from source: Language?, to target: Language) async throws -> (String, String) {
+    /// 翻译并返回（译文, 引擎名, 降级说明），全部引擎失败时抛错
+    /// 降级说明：主链上有引擎失败、由后续引擎接手时非 nil，供 UI 提示用户
+    /// （否则「自动」模式下悄悄落到 Apple 本地，用户会疑惑 Google 怎么不工作了）
+    func translate(_ text: String, from source: Language?, to target: Language) async throws
+        -> (translation: String, provider: String, fallback: String?)
+    {
         var failures: [String] = []
+        var failedNames: [String] = []
 
         // 源语言与目标语言相同：直接返回原文，不做无意义的翻译
         if let source, source == target {
-            return (text, "无需翻译")
+            return (text, "无需翻译", nil)
         }
 
         for provider in providers {
             guard provider.isAvailable else { continue }
+            // 熔断期内的引擎直接跳过，不再白等
+            if EngineBreaker.isBlocked(provider.name) {
+                failedNames.append(provider.name)
+                failures.append("\(provider.name)：近期失败，已熔断跳过")
+                continue
+            }
             do {
                 let result = try await withTimeout(seconds: engineTimeoutSeconds) {
                     try await provider.translate(text, from: source, to: target)
                 }
                 if !result.isEmpty {
-                    return (result, provider.name)
+                    let fallback: String? = failedNames.isEmpty
+                        ? nil
+                        : "\(failedNames.joined(separator: "、"))不可用，已降级到 \(provider.name)"
+                    return (result, provider.name, fallback)
                 }
+                EngineBreaker.recordFailure(provider.name)
+                failedNames.append(provider.name)
                 failures.append("\(provider.name)：空结果")
             } catch is CancellationError {
+                // 请求被取消：是「被新输入取代」而非引擎故障，不计入熔断
                 failures.append("\(provider.name)：已取消")
             } catch {
+                EngineBreaker.recordFailure(provider.name)
+                failedNames.append(provider.name)
                 failures.append("\(provider.name)：\(error.localizedDescription)")
             }
         }
