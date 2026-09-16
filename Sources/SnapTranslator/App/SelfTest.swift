@@ -79,6 +79,14 @@ enum SelfTest {
               LanguageDetector.detect("繁體中文測試，一起散步看看風景。") == .zhHant)
         check("语种检测 en-US 变体",
               LanguageDetector.detect("en-US The quick brown fox jumps over the lazy dog.") == .en)
+        // 短英文基础单词检测验证
+        check("语种检测 短词 i", LanguageDetector.detect("i") == .en)
+        check("语种检测 短词 I", LanguageDetector.detect("I") == .en)
+        check("语种检测 短词 do", LanguageDetector.detect("do") == .en)
+        check("语种检测 短词 old", LanguageDetector.detect("old") == .en)
+        check("语种检测 短词 带引号 “old”", LanguageDetector.detect("“old”") == .en)
+        check("语种检测 短词 sea", LanguageDetector.detect("sea") == .en)
+        check("语种检测 短词 ok", LanguageDetector.detect("ok") == .en)
     }
 
     // MARK: - Google 解析

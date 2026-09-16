@@ -32,27 +32,33 @@ enum TranslateDiag {
         host.show()
 
         // 镜像应用真实语向逻辑（AppDelegate.determineSourceLanguage / effectiveTargetLanguage）：
-        // sourceHint 优先，但 hint==目标 的退化配置下自动检测优先；源==目标时目标自动切英文。
+        // 手动锁定 > 自动检测；检测失败返回 nil 交给引擎自动检测（不回退 sticky hint）；
+        // 源==目标（目标为英文则自愈切中文）或简繁互为源目标时目标自动切英文。
         // --from 则完全绕过语向判定，直接测指定语言对。
         let baseTarget = targetOverride ?? settings.targetLanguage
         let rawSource: Language?
         if let forced = fromOverride {
             rawSource = forced
-        } else if let hint = settings.sourceHint {
-            rawSource = (hint == baseTarget ? LanguageDetector.detect(text) ?? hint : hint)
+        } else if let manual = settings.manualSourceLanguage {
+            rawSource = manual
         } else {
             rawSource = LanguageDetector.detect(text)
         }
         let source: Language? = rawSource
-        // 镜像 AppDelegate.effectiveTargetLanguage：源==目标，或同为中文简繁变体
-        // （Apple 不支持 zh-Hant↔zh-Hans 互译），目标自动切英文
+        // 镜像 AppDelegate.effectiveTargetLanguage：源==目标时自愈切换（目标已是英文则切
+        // 中文，否则切英文）；同为中文简繁变体（Apple 不支持 zh-Hant↔zh-Hans 互译）切英文
         let target: Language
         if fromOverride != nil {
             target = baseTarget
         } else if let src = rawSource {
             let zhVariants: Set<Language> = [.zhHans, .zhHant]
-            target = (src == baseTarget || (zhVariants.contains(src) && zhVariants.contains(baseTarget)))
-                ? .en : baseTarget
+            if src == baseTarget {
+                target = baseTarget == .en ? .zhHans : .en
+            } else if zhVariants.contains(src) && zhVariants.contains(baseTarget) {
+                target = .en
+            } else {
+                target = baseTarget
+            }
         } else {
             target = baseTarget
         }
@@ -95,7 +101,7 @@ enum TranslateDiag {
             }
             Task { @MainActor in
                 do {
-                    let (translation, provider) = try await service.translate(item, from: source, to: target)
+                    let (translation, provider, _) = try await service.translate(item, from: source, to: target)
                     results.append("  #\(index + 1) OK engine=\(provider) → \(translation)")
                 } catch {
                     results.append("  #\(index + 1) FAIL → \(error.localizedDescription)")
