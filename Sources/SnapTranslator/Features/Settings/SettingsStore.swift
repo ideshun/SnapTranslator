@@ -11,9 +11,17 @@ final class SettingsStore: ObservableObject {
     @Published var targetLanguage: Language {
         didSet { defaults.set(targetLanguage.rawValue, forKey: "st.targetLanguage") }
     }
-    /// 源语言提示，nil 表示自动检测
+    /// 源语言提示，nil 表示自动检测。
+    /// 注意：此值会被交换语向等自动逻辑改写，不代表用户意图——
+    /// 用户手动指定的源语言请看 manualSourceLanguage。
     @Published var sourceHint: Language? {
         didSet { defaults.set(sourceHint?.rawValue ?? "", forKey: "st.sourceHint") }
+    }
+    /// 用户手动锁定的源语言；nil 表示跟随自动检测。
+    /// 与 sourceHint 的区别：本值只能由用户在面板语言菜单里选择/取消（自动检测），
+    /// 锁定后自动检测不再覆盖它——解决自动检测不可靠时无法手动纠正的问题。
+    @Published var manualSourceLanguage: Language? {
+        didSet { defaults.set(manualSourceLanguage?.rawValue ?? "", forKey: "st.manualSource") }
     }
     @Published var alwaysOnTop: Bool {
         didSet { defaults.set(alwaysOnTop, forKey: "st.alwaysOnTop") }
@@ -113,6 +121,13 @@ final class SettingsStore: ObservableObject {
     }
 
     init() {
+        // 一次性清理：旧版「交换语向」会把目标语言写进源语言锁定（st.manualSource），
+        // 之后所有输入（包括英文）都被钉成同一个源。交换已改为解除锁定而非写锁定，
+        // 这里清掉历史残留，让自动检测恢复工作
+        if !defaults.bool(forKey: "st.cleanup.manualSwapLock") {
+            defaults.set(true, forKey: "st.cleanup.manualSwapLock")
+            defaults.removeObject(forKey: "st.manualSource")
+        }
         // 一次性迁移到 GLM-5.2：老用户若仍是旧默认 auto/旧 OpenAI 地址/旧模型，升级后自动切到 GLM
         if !defaults.bool(forKey: "st.migrated.glm52") {
             defaults.set(true, forKey: "st.migrated.glm52")
@@ -130,6 +145,7 @@ final class SettingsStore: ObservableObject {
         }
         targetLanguage = Language(rawValue: defaults.string(forKey: "st.targetLanguage") ?? "") ?? .zhHans
         sourceHint = defaults.string(forKey: "st.sourceHint").flatMap(Language.init(rawValue:))
+        manualSourceLanguage = defaults.string(forKey: "st.manualSource").flatMap(Language.init(rawValue:))
         alwaysOnTop = defaults.object(forKey: "st.alwaysOnTop") as? Bool ?? true
         hideWindowOnCapture = defaults.object(forKey: "st.hideWindowOnCapture") as? Bool ?? true
         // 「1:1」tab 已改名「对比」，旧持久化值解码失败时回退默认
