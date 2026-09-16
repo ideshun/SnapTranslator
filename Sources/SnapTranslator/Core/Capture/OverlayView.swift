@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// 框选遮罩视图：全屏半透明遮罩 + 拖拽绘制选区（本地坐标原点在左上角）
+/// 框选遮罩视图：支持定格底图 + 全屏半透明遮罩 + 拖拽绘制选区（本地坐标原点在左上角）
 struct OverlayView: View {
     let screenFrame: CGRect
-    let onSelect: (CGRect) -> Void
+    var snapshot: NSImage?
+    let onSelect: (CGRect, CGRect) -> Void // (globalRect, localRect)
     let onCancel: () -> Void
 
     @State private var dragStart: CGPoint?
@@ -21,6 +22,17 @@ struct OverlayView: View {
 
     var body: some View {
         ZStack {
+            // ① 最底层：全屏幕静止画面（定格瞬态菜单、悬浮提示等，像微信/QQ一样冻结屏幕）
+            if let snapshot {
+                Image(nsImage: snapshot)
+                    .resizable()
+                    .interpolation(.none)
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: screenFrame.width, height: screenFrame.height)
+                    .position(x: screenFrame.width / 2, y: screenFrame.height / 2)
+            }
+
+            // ② 遮罩层：非选区覆盖半透明暗色，选区镂空透出底层清晰画面
             Path { path in
                 path.addRect(CGRect(origin: .zero, size: screenFrame.size))
                 if let selection {
@@ -29,6 +41,7 @@ struct OverlayView: View {
             }
             .fill(Color.black.opacity(0.35), style: FillStyle(eoFill: true))
 
+            // ③ 选区边框与尺寸标签
             if let selection {
                 Rectangle()
                     .stroke(Color.white, lineWidth: 1.5)
@@ -77,7 +90,7 @@ struct OverlayView: View {
                         onCancel()
                         return
                     }
-                    onSelect(toGlobal(rect))
+                    onSelect(toGlobal(rect), rect)
                 }
         )
     }

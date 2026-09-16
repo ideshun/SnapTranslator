@@ -1,6 +1,6 @@
 import AppKit
 
-/// 截屏流程编排：遮罩框选 → 区域截图 → 回调
+/// 截屏流程编排：瞬间定格 → 遮罩框选 → 精准裁剪 → 回调
 @MainActor
 final class CaptureCoordinator {
     private var overlays: [OverlayWindow] = []
@@ -15,25 +15,46 @@ final class CaptureCoordinator {
 
     // MARK: - 框选流程
 
-    /// 开始框选：所有屏幕盖上遮罩
+    /// 开始框选：瞬间抓取所有屏幕画面定格，并覆盖遮罩
     func begin() {
         guard overlays.isEmpty else { return }
-        // 激活应用并让遮罩成为 key，避免首次鼠标按下被“激活窗口”吞掉
+
+        // ① 瞬间定格：在激活应用/转移焦点前立刻抓取各屏幕的整屏快照！
+        // 确保右键菜单、下拉列表、Hover 浮层、临时提示等瞬间被冻结在内存底图中
+        var screenSnapshots: [CGDirectDisplayID: CGImage] = [:]
+        for screen in NSScreen.screens {
+            if let snapshot = ScreenCapture.captureScreen(displayID: screen.displayID) {
+                screenSnapshots[screen.displayID] = snapshot
+            }
+        }
+
+        // ② 判定当前光标所在屏幕，优先将该屏幕的 Overlay 设为 KeyWindow
+        let mouseLocation = NSEvent.mouseLocation
+        let activeScreen = NSScreen.screens.first { $0.frame.contains(mouseLocation) } ?? NSScreen.main
+
         NSApp.activate(ignoringOtherApps: true)
-        for (index, screen) in NSScreen.screens.enumerated() {
-            let overlay = OverlayWindow(screen: screen)
-            overlay.onRegionSelected = { [weak self] rect in
-                self?.finishSelection(rect: rect)
+
+        for screen in NSScreen.screens {
+            let snapshot = screenSnapshots[screen.displayID]
+            let overlay = OverlayWindow(screen: screen, snapshot: snapshot)
+            overlay.onRegionSelected = { [weak self] globalRect, localRect, frozenSnapshot in
+                self?.finishSelection(
+                    globalRect: globalRect,
+                    localRect: localRect,
+                    screen: screen,
+                    snapshot: frozenSnapshot
+                )
             }
             overlay.onCancelled = { [weak self] in
                 self?.cancel()
             }
             overlays.append(overlay)
             overlay.orderFront(nil)
-            if index == 0 {
+            if screen == activeScreen {
                 overlay.makeKeyAndOrderFront(nil)
             }
         }
+
         NSCursor.crosshair.push()
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event }
@@ -49,9 +70,24 @@ final class CaptureCoordinator {
         onCancelled?()
     }
 
-    private func finishSelection(rect: CGRect) {
+    private func finishSelection(
+        globalRect: CGRect,
+        localRect: CGRect,
+        screen: NSScreen,
+        snapshot: CGImage?
+    ) {
         teardownOverlays()
-        capture(rect: rect)
+
+        // 优先从内存中的定格画面直接裁剪（零延迟 + 100% 保持按下瞬间的状态）
+        if let snapshot,
+           let croppedImage = ScreenCapture.crop(image: snapshot, screenFrame: screen.frame, localPointRect: localRect) {
+            Self.saveLastRect(globalRect)
+            onCaptured?(croppedImage, globalRect)
+            return
+        }
+
+        // 兜底回退：若无底图快照则现场直接截图
+        capture(rect: globalRect)
     }
 
     private func teardownOverlays() {
