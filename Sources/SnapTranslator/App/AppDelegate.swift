@@ -660,45 +660,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// 交换默认源/目标语言方向（如英译中 ↔ 中译英）
-    /// 对下次截屏生效；同时更新当前面板中的语言显示
+    /// 用户点击 exchange 按钮具有最高优先级，锁死当前指定的语向
     @objc private func swapLanguages() {
         let model = panelController.model
-        // 源语言：优先用已识别到的源语言，其次用设置里的 sourceHint，兜底英文
-        let currentSource = model.sourceLanguage ?? settings.sourceHint ?? .en
-        // 目标语言：使用面板上当前显示的实际目标语言（可能已被自动调整）
+
+        // 1. 获取当前实际生效的源语言与目标语言
         let currentTarget = model.targetLanguage
-        guard currentSource != currentTarget else {
-            model.collectNotice = "源语言和目标语言相同，无需切换"
-            Task { [weak model] in
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                model?.collectNotice = ""
-            }
-            return
+        let detectedSource = !model.sourceText.isEmpty ? LanguageDetector.detect(model.sourceText) : nil
+        let currentSource: Language
+        if let manual = settings.manualSourceLanguage {
+            currentSource = manual
+        } else if let modelSrc = model.sourceLanguage {
+            currentSource = modelSrc
+        } else if let detected = detectedSource {
+            currentSource = detected
+        } else {
+            currentSource = (currentTarget == .zhHans ? .en : .zhHans)
         }
 
-        // 交换持久化默认方向：新源 = 原目标，新目标 = 原源
-        settings.sourceHint = currentTarget
-        settings.targetLanguage = currentSource
-        // 交换后必须解除源语言锁定：交换只是纠正当前语向，不是钉死源语言。
-        // 旧实现把交换后的目标语言写进 manualSourceLanguage，之后所有输入
-        // （包括英文）都被钉成同一个源，英文输入被识别成中文正是这个残留
-        settings.manualSourceLanguage = nil
-        // 同时更新面板显示
-        model.sourceLanguage = currentTarget
-        model.targetLanguage = currentSource
-        model.collectNotice = "已切换语向：\(currentTarget.displayName) → \(currentSource.displayName)"
+        // 2. 交换得到新的源语言与目标语言
+        let newSource = currentTarget
+        var newTarget = currentSource
+
+        // 如果新源语言与新目标语言相同（如极端异常情况），自动反转对立语种
+        if newSource == newTarget {
+            newTarget = (newSource == .zhHans ? .en : .zhHans)
+        }
+
+        // 3. 用户手动交换具有最高优先级：锁定 manualSourceLanguage 与 targetLanguage
+        settings.manualSourceLanguage = newSource
+        settings.sourceHint = newSource
+        settings.targetLanguage = newTarget
+
+        model.sourceLanguage = newSource
+        model.targetLanguage = newTarget
+        model.collectNotice = "已切换语向：\(newSource.displayName) → \(newTarget.displayName)"
 
         Task { [weak model] in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             model?.collectNotice = ""
         }
 
-        // 自动重新翻译：核心场景是「自动识别语言有误时纠正语向」——
-        // 保留原识别文本不变，按交换后的新目标语言重新翻译；
-        // 不是把译文当新原文反向对换。原文未变，OCR 行位置信息仍然有效。
+        // 4. 文本与翻译处理
+        // 如果在翻译 Tab（或无图场景）且已有译文，则将原文与译文对调，实现最符合直觉的反向翻译
+        if (model.tab == .translation || model.image == nil) && !model.translatedText.isEmpty {
+            let textToTranslate = model.translatedText
+            model.sourceText = textToTranslate
+            model.translatedText = ""
+            performDirectTranslate(text: textToTranslate)
+            return
+        }
+
+        // 其他场景（如截图对比/识别）：使用新源语言和新目标语言对当前文本重新翻译
         guard !model.sourceText.isEmpty else { return }
         if model.phase == .idle {
-            // 输入页签：走实时翻译路径，保持可编辑状态
             performDirectTranslate(text: model.sourceText)
         } else {
             reTranslateCurrent()
@@ -884,6 +899,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func recognizeAndTranslate(image: NSImage, preserveTab: Bool, addHistory: Bool) {
         let model = panelController.model
         model.phase = .recognizing
+        // 全新截屏（非重试）时：若设置中未锁定源语言（自动检测），重置上一次面板内的临时锁定，使新截图自动检测
+        if addHistory && settings.sourceHint == nil {
+            settings.manualSourceLanguage = nil
+        }
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -938,6 +957,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 否则源==目标会让引擎原样返回并标记「无需翻译」
     private func effectiveTargetLanguage(source: Language?) -> Language {
         let target = settings.targetLanguage
+        // 核心：若用户手动指定了源语言（manualSourceLanguage != nil，含 exchange 切换），
+        // 用户的选择优先级最高，绝不擅自篡改目标语言
+        if settings.manualSourceLanguage != nil {
+            return target
+        }
         guard let source else { return target }
         if source == target { return target == .en ? .zhHans : .en }
         // 源与目标同为中文简繁变体也按退化处理：Apple 不支持 zh-Hant↔zh-Hans 互译
