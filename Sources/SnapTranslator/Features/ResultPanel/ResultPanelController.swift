@@ -69,7 +69,7 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
         }
         // 关闭（右上角红绿灯/⌘W）时隐藏而非退出，保持菜单栏驻留
         panel.delegate = self
-        panel.contentView = NSHostingView(
+        let hosting = NSHostingView(
             rootView: ResultPanelView(
                 model: model,
                 settings: settings,
@@ -105,6 +105,11 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
                 }
             )
         )
+        // 关闭 hostingView 的自动尺寸同步：默认会把 SwiftUI 内容的理想尺寸作为
+        // 约束传给窗口，左下角语言/引擎菜单文本变宽（如「自动」→「English」）时
+        // 会把整个窗口撑大。关掉后窗口尺寸只由用户拖拽和 setContentSize 控制。
+        hosting.sizingOptions = []
+        panel.contentView = hosting
         observeFocus(panel)
         self.panel = panel
         return panel

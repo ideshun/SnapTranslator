@@ -19,6 +19,28 @@ final class ResultModel: ObservableObject {
         case oneToOne = "对比"
 
         var id: String { rawValue }
+
+        var iconName: String {
+            switch self {
+            case .recognize: return "text.viewfinder"
+            case .translation: return "character.bubble"
+            case .sideBySide: return "rectangle.split.2x1"
+            case .oneToOne: return "sparkles.rectangle.stack"
+            }
+        }
+
+        var tooltip: String {
+            switch self {
+            case .recognize:
+                return "识别：提取截图原文"
+            case .translation:
+                return "翻译：双栏实时翻译"
+            case .sideBySide:
+                return "对照：原图与译文对照"
+            case .oneToOne:
+                return "对比：1:1 原图覆盖翻译"
+            }
+        }
     }
 
     @Published var phase: Phase = .idle
@@ -39,6 +61,8 @@ final class ResultModel: ObservableObject {
     @Published var leftSelectedText = ""
     /// 收藏成功后的短暂提示
     @Published var collectNotice = ""
+    /// 实时输入/修改时是否正在翻译（用于在翻译 Tab 显示丝滑的更新状态）
+    @Published var isLiveTranslating = false
     /// OCR 识别到的每行文字及其在图像中的归一化位置（用于翻译覆盖定位）
     @Published var ocrLines: [(text: String, rect: CGRect)] = []
 
@@ -96,6 +120,7 @@ final class ResultModel: ObservableObject {
         translatedText = translation
         providerName = provider
         sourceLanguage = source
+        isLiveTranslating = false
         phase = .done
         if !preserveTab {
             // 翻译完成后聚焦默认页签（设置里可配，默认「对比」）
@@ -118,6 +143,7 @@ final class ResultModel: ObservableObject {
     }
 
     func failed(_ message: String) {
+        isLiveTranslating = false
         phase = .failed(message)
     }
 
@@ -126,6 +152,7 @@ final class ResultModel: ObservableObject {
         image = nil
         sourceText = ""
         translatedText = ""
+        isLiveTranslating = false
         sourceLanguage = nil
         providerName = ""
         engineOverride = nil

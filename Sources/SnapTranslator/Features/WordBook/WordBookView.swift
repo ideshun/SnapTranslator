@@ -14,6 +14,8 @@ struct WordBookView: View {
     /// 当前选中词的翻译结果
     @State private var translationResult = ""
     @State private var isTranslating = false
+    /// 操作结果提示（复制/删除/导出），几秒后自动消失
+    @State private var exportNotice = ""
 
     private var filtered: [Word] {
         guard !searchText.isEmpty else { return store.words }
@@ -46,6 +48,7 @@ struct WordBookView: View {
                         Label("导出 CSV", systemImage: "square.and.arrow.up")
                     }
                     .disabled(store.words.isEmpty)
+                    .hoverFeedback("把全部生词导出为 CSV 文件")
                 }
                 .padding(12)
 
@@ -80,7 +83,7 @@ struct WordBookView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.borderless)
-                        .help("删除")
+                        .hoverFeedback("删除")
                     }
                     .width(36)
                 }
@@ -107,7 +110,7 @@ struct WordBookView: View {
                                         .font(.system(size: 14))
                                 }
                                 .buttonStyle(.borderless)
-                                .help("朗读词条")
+                                .hoverFeedback("朗读词条")
                             }
 
                             Divider()
@@ -127,7 +130,7 @@ struct WordBookView: View {
                                             .font(.system(size: 12))
                                     }
                                     .buttonStyle(.borderless)
-                                    .help("朗读上下文")
+                                    .hoverFeedback("朗读上下文")
                                 }
                                 Text(word.context)
                                     .font(.system(size: 13))
@@ -153,7 +156,7 @@ struct WordBookView: View {
                                                 .font(.system(size: 12))
                                         }
                                         .buttonStyle(.borderless)
-                                        .help("翻译词条")
+                                        .hoverFeedback("翻译词条")
                                     }
                                     // 朗读翻译结果
                                     if !translationResult.isEmpty {
@@ -165,7 +168,7 @@ struct WordBookView: View {
                                                 .font(.system(size: 12))
                                         }
                                         .buttonStyle(.borderless)
-                                        .help("朗读译文")
+                                        .hoverFeedback("朗读译文")
                                     }
                                 }
                                 if translationResult.isEmpty {
@@ -211,20 +214,24 @@ struct WordBookView: View {
                             HStack {
                                 Button {
                                     NSPasteboard.writeString(word.context)
+                                    exportNotice = "已复制上下文"
                                 } label: {
                                     Label("复制上下文", systemImage: "doc.on.doc")
                                 }
                                 .buttonStyle(.borderless)
+                                .hoverFeedback("复制这条生词的上下文原文")
 
                                 Button {
                                     store.delete(word)
                                     selectedWordID = nil
                                     translationResult = ""
+                                    exportNotice = "已删除「\(String(word.phrase.prefix(10)))」"
                                 } label: {
                                     Label("删除", systemImage: "trash")
                                         .foregroundStyle(.red)
                                 }
                                 .buttonStyle(.borderless)
+                                .hoverFeedback("从生词本删除这条生词")
                             }
                         }
                         .padding(20)
@@ -244,9 +251,32 @@ struct WordBookView: View {
             .frame(minWidth: 220)
         }
         .frame(minWidth: 700, minHeight: 420)
+        .overlay(alignment: .bottom) {
+            // 操作结果提示条：复制/删除/导出后短暂显示
+            if !exportNotice.isEmpty {
+                Text(exportNotice)
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.25)))
+                    .shadow(radius: 3)
+                    .padding(.bottom, 14)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: exportNotice)
         .onChange(of: selectedWordID) { _, _ in
             // 切换词条时清空翻译结果
             translationResult = ""
+        }
+        .onChange(of: exportNotice) { _, notice in
+            // 提示 2 秒后自动消失
+            guard !notice.isEmpty else { return }
+            Task {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                exportNotice = ""
+            }
         }
     }
 
@@ -273,6 +303,7 @@ struct WordBookView: View {
             let csv = WordBookExporter.csv(for: store.words)
             do {
                 try Data(csv.utf8).write(to: url)
+                exportNotice = "已导出 \(store.words.count) 条生词到 \(url.lastPathComponent)"
             } catch {
                 let alert = NSAlert(error: error)
                 alert.runModal()

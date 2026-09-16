@@ -24,11 +24,17 @@ struct SettingsView: View {
                     Text(language.displayName).tag(language)
                 }
             }
+            .hoverFeedback("翻译的目标语言")
             Picker("源语言", selection: $settings.sourceHint) {
                 Text("自动检测").tag(Language?.none)
                 ForEach(Language.allCases) { language in
                     Text(language.displayName).tag(Language?.some(language))
                 }
+            }
+            .hoverFeedback("输入文本的源语言；自动检测不可靠时可手动指定")
+            .onChange(of: settings.sourceHint) { _, newValue in
+                // 设置页改源语言同样是显式用户选择，同步手动锁定，避免被旧锁定值覆盖
+                settings.manualSourceLanguage = newValue
             }
             // 默认窗口大小设置
             Picker("默认窗口大小", selection: $settings.defaultWindowSize) {
@@ -36,17 +42,22 @@ struct SettingsView: View {
                     Text(size.displayName).tag(size)
                 }
             }
+            .hoverFeedback("截屏翻译后结果面板的默认大小")
             Toggle("在程序坞中显示图标", isOn: $settings.showInDock)
+                .hoverFeedback("关闭后应用仅驻留菜单栏")
             Toggle("结果窗口置顶", isOn: $settings.alwaysOnTop)
+                .hoverFeedback("结果面板始终显示在其他窗口之上（也可用工具栏图钉切换）")
             HStack {
                 Text("失焦透明度")
                 Slider(value: $settings.unfocusedOpacity, in: 0.1...0.9, step: 0.05)
+                    .hoverFeedback("面板失去焦点时的透明度")
                 Text("\(Int(settings.unfocusedOpacity * 100))%")
                     .monospacedDigit()
                     .frame(width: 36, alignment: .trailing)
                     .foregroundStyle(.secondary)
             }
             Toggle("登录时自动启动", isOn: $settings.launchAtLogin)
+                .hoverFeedback("登录 macOS 时自动启动 SnapTranslator")
 
             // 截图显示方式
             Picker("截图显示方式", selection: $settings.screenshotDisplayMode) {
@@ -54,6 +65,7 @@ struct SettingsView: View {
                     Text(mode.displayName).tag(mode)
                 }
             }
+            .hoverFeedback("自适应宽度：图片缩放至面板宽度；原图：保持原始尺寸，超出部分滚动")
 
             // 截图翻译完成后默认聚焦的页签
             Picker("完成后默认页签", selection: $settings.defaultDoneTab) {
@@ -61,9 +73,11 @@ struct SettingsView: View {
                     Text(tab.rawValue).tag(tab)
                 }
             }
+            .hoverFeedback("截图翻译完成后自动聚焦的查看页签")
 
             // 截屏时隐藏面板，避免面板入镜
             Toggle("截屏时隐藏窗口", isOn: $settings.hideWindowOnCapture)
+                .hoverFeedback("截屏前先隐藏翻译面板，避免面板出现在截图中；取消框选自动恢复")
 
             // 识别历史设置
             Picker("保存最近识别次数", selection: $settings.historyLimit) {
@@ -76,6 +90,7 @@ struct SettingsView: View {
                 Text("180 次").tag(180)
                 Text("280 次").tag(280)
             }
+            .hoverFeedback("在面板内保留最近几次识别记录")
         }
         .formStyle(.grouped)
         .padding(1)
@@ -133,7 +148,7 @@ struct SettingsView: View {
                                 .font(.system(size: 11))
                         }
                         .buttonStyle(.borderless)
-                        .help("恢复默认 Base URL 与模型（\(SettingsStore.defaultOpenAIModel)）")
+                        .hoverFeedback("恢复默认 Base URL 与模型（\(SettingsStore.defaultOpenAIModel)）")
                     }
                 }
             }
@@ -165,11 +180,11 @@ struct SettingsView: View {
                             .font(.system(size: 11))
                     }
                     .buttonStyle(.borderless)
-                    .help("恢复默认主机与端口（\(SettingsStore.defaultProxyHost):\(SettingsStore.defaultProxyPort)）")
+                    .hoverFeedback("恢复默认主机与端口（\(SettingsStore.defaultProxyHost):\(SettingsStore.defaultProxyPort)）")
                     Toggle("", isOn: $settings.proxyEnabled)
                         .toggleStyle(.switch)
                         .labelsHidden()
-                        .help("启用/停用云引擎代理")
+                        .hoverFeedback("启用/停用云引擎代理")
                 }
             }
             Section {
@@ -177,7 +192,7 @@ struct SettingsView: View {
                     Button("下载 Apple 翻译语言包") {
                         onPrepareAppleLanguages()
                     }
-                    .help("调起系统设置 → 通用 → 翻译 界面，手动下载离线翻译语言包")
+                    .hoverFeedback("调起系统设置 → 通用 → 翻译 界面，手动下载离线翻译语言包")
                 }
                 Text("Apple 系统翻译完全离线，需 MacOS 15+。点击按钮会打开系统「翻译」语言设置界面，在系统设置中下载所需语言包。翻译时若语言包未就绪会自动触发准备。该引擎失败时会自动降级到云引擎（智谱 AI/Google/DeepL，需联网）。")
                     .font(.system(size: 12))

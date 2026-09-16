@@ -1,11 +1,58 @@
 import AppKit
 import SwiftUI
 
+/// 左右图同步滚动管理器（单例，用于在对比/对照模式中联动左右两图的滚动与平移）
+final class ImageScrollSyncHub {
+    static let shared = ImageScrollSyncHub()
+    private var isSyncing = false
+    private var groups: [String: NSHashTable<InteractiveImageScrollView>] = [:]
+
+    func register(_ scrollView: InteractiveImageScrollView, for groupID: String) {
+        if groups[groupID] == nil {
+            groups[groupID] = NSHashTable.weakObjects()
+        }
+        groups[groupID]?.add(scrollView)
+    }
+
+    func unregister(_ scrollView: InteractiveImageScrollView, from groupID: String) {
+        groups[groupID]?.remove(scrollView)
+    }
+
+    func broadcastScroll(from source: InteractiveImageScrollView, groupID: String) {
+        guard !isSyncing else { return }
+        isSyncing = true
+        defer { isSyncing = false }
+
+        guard let list = groups[groupID]?.allObjects else { return }
+        let sourceClip = source.contentView
+        let sourceContainer = source.containerView.frame.size
+        let maxSourceX = max(1, sourceContainer.width - sourceClip.bounds.width)
+        let maxSourceY = max(1, sourceContainer.height - sourceClip.bounds.height)
+        let ratioX = sourceClip.bounds.origin.x / maxSourceX
+        let ratioY = sourceClip.bounds.origin.y / maxSourceY
+
+        for target in list where target !== source {
+            let targetClip = target.contentView
+            let targetContainer = target.containerView.frame.size
+            let maxTargetX = max(0, targetContainer.width - targetClip.bounds.width)
+            let maxTargetY = max(0, targetContainer.height - targetClip.bounds.height)
+
+            let targetX = max(0, min(maxTargetX, ratioX * maxTargetX))
+            let targetY = max(0, min(maxTargetY, ratioY * maxTargetY))
+
+            targetClip.scroll(to: NSPoint(x: targetX, y: targetY))
+            target.reflectScrolledClipView(targetClip)
+        }
+    }
+}
+
 /// 可拖拽、可缩放图片的 NSScrollView 子类
 /// - Option + 滚轮缩放
 /// - 鼠标左键拖拽平移（图片超出可视区时）
 /// - 触控板捏合缩放
 /// - 双击重置缩放
+/// - 智能自适应规则：源图小于容器则保持 1:1 原图展示；源图大于容器则等比自动缩放完整容纳
+/// - 居中对称布局
 final class InteractiveImageScrollView: NSScrollView {
     /// 当前缩放比例
     var imageScale: CGFloat = 1.0 {
@@ -18,13 +65,25 @@ final class InteractiveImageScrollView: NSScrollView {
     }
     var onScaleChanged: ((CGFloat) -> Void)?
 
-    /// true：缩放 1.0 时图片适配可视区（自适应宽度模式，现有行为）
-    /// false：缩放 1.0 时图片按原始尺寸显示（原图模式）
+    /// true：缩放 1.0 时自适应适配（小于容器按原图展示，大于容器缩放适应）
+    /// false：强制原图 1.0
     var fitsToViewport = true {
         didSet {
             guard fitsToViewport != oldValue else { return }
             needsLayout = true
             layoutSubtreeIfNeeded()
+        }
+    }
+
+    /// 同步滚动组标识（如 "oneToOneSync"，在对比模式下左右联动）
+    var syncGroupID: String? {
+        didSet {
+            if let oldValue, oldValue != syncGroupID {
+                ImageScrollSyncHub.shared.unregister(self, from: oldValue)
+            }
+            if let syncGroupID {
+                ImageScrollSyncHub.shared.register(self, for: syncGroupID)
+            }
         }
     }
 
@@ -56,6 +115,12 @@ final class InteractiveImageScrollView: NSScrollView {
         setup()
     }
 
+    deinit {
+        if let syncGroupID {
+            ImageScrollSyncHub.shared.unregister(self, from: syncGroupID)
+        }
+    }
+
     // MARK: - Setup
 
     private func setup() {
@@ -69,6 +134,14 @@ final class InteractiveImageScrollView: NSScrollView {
 
         containerView.addSubview(imageView)
         documentView = containerView
+
+        contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(clipViewBoundsDidChange(_:)),
+            name: NSView.boundsDidChangeNotification,
+            object: contentView
+        )
 
         // 容器视图回调：拖拽平移和双击重置
         containerView.onPanStart = { [weak self] in
@@ -85,6 +158,12 @@ final class InteractiveImageScrollView: NSScrollView {
         }
     }
 
+    @objc private func clipViewBoundsDidChange(_ notification: Notification) {
+        if let syncGroupID {
+            ImageScrollSyncHub.shared.broadcastScroll(from: self, groupID: syncGroupID)
+        }
+    }
+
     // MARK: - Layout
 
     override func layout() {
@@ -92,7 +171,7 @@ final class InteractiveImageScrollView: NSScrollView {
         updateImageLayout()
     }
 
-    /// 根据缩放比例更新图片和滚动区域
+    /// 根据缩放比例与自适应规则更新图片和滚动区域
     private func updateImageLayout() {
         guard let image = displayImage else {
             imageView.image = nil
@@ -103,23 +182,27 @@ final class InteractiveImageScrollView: NSScrollView {
         guard baseSize.width > 0, baseSize.height > 0 else { return }
 
         let clipSize = contentView.bounds.size
+        guard clipSize.width > 0, clipSize.height > 0 else { return }
+
         let availW = max(clipSize.width - 16, 50)
         let availH = max(clipSize.height - 16, 50)
 
-        // 自适应模式：1.0 缩放时图片适配可视区（保持比例）；原图模式：1.0 即原始尺寸
+        // 自适应规则：
+        // 如果源图小于容器：按源图 1:1 原尺寸展示（min(1.0, ...) 取 1.0）；
+        // 如果源图大于容器：自动等比缩放至容器内完整显示
         let baseScale = fitsToViewport
             ? min(1.0, availW / baseSize.width, availH / baseSize.height)
             : 1.0
         let displayW = baseSize.width * baseScale * imageScale
         let displayH = baseSize.height * baseScale * imageScale
 
-        // 更新容器大小（为滚动提供可滚动区域）
+        // 更新滚动容器大小
         let containerW = max(displayW + 16, clipSize.width)
         let containerH = max(displayH + 16, clipSize.height)
         containerView.frame = NSRect(x: 0, y: 0, width: containerW, height: containerH)
         containerView.setFrameSize(containerView.frame.size)
 
-        // 更新图片大小（左上角对齐，带 8pt 边距）
+        // 图片在左上角对齐（带 8pt 边距）
         imageView.frame = NSRect(x: 8, y: 8, width: displayW, height: displayH)
         imageView.imageScaling = .scaleAxesIndependently
     }
@@ -164,6 +247,10 @@ final class InteractiveImageScrollView: NSScrollView {
 
         clip.scroll(to: newOrigin)
         reflectScrolledClipView(clip)
+
+        if let syncGroupID {
+            ImageScrollSyncHub.shared.broadcastScroll(from: self, groupID: syncGroupID)
+        }
     }
 
     private func endPanning() {
@@ -243,14 +330,17 @@ final class PanContainerView: NSView {
 struct InteractiveImageView: NSViewRepresentable {
     let image: NSImage
     @Binding var scale: CGFloat
-    /// 自适应宽度（true）或原图（false）
+    /// 智能自适应容器（true）或原图（false）
     var fitsToViewport: Bool = true
+    /// 联动滚动组（在对比模式下左右栏传入相同 groupID 即可双向同步）
+    var syncGroupID: String? = nil
 
     func makeNSView(context: Context) -> InteractiveImageScrollView {
         let view = InteractiveImageScrollView()
         view.displayImage = image
         view.imageScale = scale
         view.fitsToViewport = fitsToViewport
+        view.syncGroupID = syncGroupID
         view.onScaleChanged = { newScale in
             DispatchQueue.main.async {
                 scale = newScale
@@ -265,6 +355,9 @@ struct InteractiveImageView: NSViewRepresentable {
         }
         if nsView.fitsToViewport != fitsToViewport {
             nsView.fitsToViewport = fitsToViewport
+        }
+        if nsView.syncGroupID != syncGroupID {
+            nsView.syncGroupID = syncGroupID
         }
         if abs(nsView.imageScale - scale) > 0.001 {
             nsView.setImageScale(scale)

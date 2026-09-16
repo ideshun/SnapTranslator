@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var activeTranslationCount = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setupToolTipDelay()
         wordBook = WordBookStore()
 
         // 菜单栏图标必须在任何窗口创建前设置，确保可靠显示
@@ -74,6 +75,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - 程序坞策略
+
+    /// 缩短全局 Tooltip 弹出延迟（从默认 2 秒减少到 150 毫秒，交互灵敏即时）
+    private func setupToolTipDelay() {
+        UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 150])
+        UserDefaults.standard.set(150, forKey: "NSInitialToolTipDelay")
+        if let managerClass = NSClassFromString("NSToolTipManager") as? NSObject.Type {
+            let sel = Selector(("sharedToolTipManager"))
+            if managerClass.responds(to: sel),
+               let manager = managerClass.perform(sel)?.takeUnretainedValue() as? NSObject {
+                let setSel = Selector(("setInitialToolTipDelay:"))
+                if manager.responds(to: setSel) {
+                    _ = manager.perform(setSel, with: 0.15)
+                }
+            }
+        }
+    }
 
     /// 根据设置切换程序坞显隐（LSUIElement 模式下需运行时切换激活策略）
     private func applyDockPolicy() {
@@ -386,10 +403,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panelController.applyPin(alwaysOnTop: settings.alwaysOnTop)
         // 设置变化时同步应用默认窗口大小
         panelController.applyDefaultWindowSize()
+        // 置顶状态变化时同步功能弹窗（生词本/设置）层级，保证弹窗在置顶面板之上
+        applyPopupWindowLevels()
         statusItem?.menu = buildMenu()
 
         // 按历史设置限制历史条数
         trimHistory()
+    }
+
+    /// 功能弹窗层级跟随置顶状态：面板置顶时弹窗取 .modalPanel，
+    /// 否则普通层级（与 showWindow 创建时的规则保持一致）
+    private func applyPopupWindowLevels() {
+        let level: NSWindow.Level = settings.alwaysOnTop ? .modalPanel : .normal
+        for window in [wordBookWindow, settingsWindow].compactMap({ $0 }) {
+            window.level = level
+        }
     }
 
     /// 根据设置修剪历史记录
@@ -426,9 +454,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - 语言切换
 
-    /// 用户从状态栏选择源语言后：更新设置并重新翻译当前文本
+    /// 用户从状态栏选择源语言后：记录手动锁定并重新翻译当前文本。
+    /// 选择 nil（自动检测）= 解除锁定，恢复自动检测。
     private func handleSourceLanguageChange(_ lang: Language?) {
-        // 更新持久化设置
+        // 手动锁定优先于一切自动逻辑（检测/交换语向都不能覆盖用户选择）
+        settings.manualSourceLanguage = lang
+        // 同步 hint，保持 OCR 语言集等其他读取方一致
         settings.sourceHint = lang
         // 如有当前文本，重新翻译
         reTranslateCurrent()
@@ -464,7 +495,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let source = determineSourceLanguage(for: trimmed)
         let target = effectiveTargetLanguage(source: source)
+        // 与 liveTranslate 一致：语向判定后立即同步源/目标两个菜单
+        model.sourceLanguage = source
         model.targetLanguage = target
+        model.isLiveTranslating = true
 
         liveTranslateGeneration &+= 1
         let generation = liveTranslateGeneration
@@ -493,7 +527,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             guard generation == self.liveTranslateGeneration else { return }
             do {
-                let (translation, provider) = try await service.translate(
+                let (translation, provider, fallback) = try await service.translate(
                     trimmed,
                     from: source,
                     to: target
@@ -501,13 +535,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard generation == self.liveTranslateGeneration else { return }
                 model.translatedText = translation
                 model.providerName = provider
-                model.sourceLanguage = source
+                model.isLiveTranslating = false
                 model.phase = .done
+                showFallbackNotice(fallback, in: model)
             } catch is CancellationError {
                 // 请求被取消（防抖被新输入取代 / 锚点窗口隐藏清队），静默处理不打扰用户
                 return
             } catch {
                 guard generation == self.liveTranslateGeneration else { return }
+                model.isLiveTranslating = false
                 model.phase = .failed("翻译失败：\(error.localizedDescription)")
             }
         }
@@ -524,13 +560,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             liveTranslateGeneration &+= 1
             model.translatedText = ""
             model.collectNotice = ""
+            model.isLiveTranslating = false
             return
         }
 
-        // 编辑停顿 400ms 后再翻译，避免连续输入时反复请求
+        // 输入发生变动时立即标记翻译中状态（右侧译文区即刻呈现更新反馈）
+        model.isLiveTranslating = true
+
+        // 编辑停顿 250ms 后再翻译，避免连续输入时反复请求
+        // （400ms 偏保守，叠加引擎链耗时后体感延迟明显）
         liveTranslateDebounce?.cancel()
         liveTranslateDebounce = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 400_000_000)
+            try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
             self?.performLiveTranslate(text: trimmed)
         }
@@ -543,8 +584,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !trimmed.isEmpty else {
             model.translatedText = ""
             model.collectNotice = ""
+            model.isLiveTranslating = false
             return
         }
+        model.isLiveTranslating = true
         // 同步源文本（编辑视图已更新 model.sourceText，这里仅确保一致）
         // ⚠️ 注意：不要把 trim 后的文本回写 model.sourceText！编辑框在 textDidChange 里
         // 已经用原始文本更新过 binding；若这里回写 trim 后的值，SwiftUI updateNSView 会
@@ -553,6 +596,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let source = determineSourceLanguage(for: trimmed)
         // 若源语言与目标语言相同，自动切到英文
         let target = effectiveTargetLanguage(source: source)
+        // 语向判定（主线程同步）完成后立即同步两个菜单：
+        // 若只更新目标、源等翻译完成才更新，输入语种变化时会出现
+        // 「目标先变、源延迟几秒才变」的不同步观感
+        model.sourceLanguage = source
         model.targetLanguage = target
         // 生成序号，仅最新一次请求的结果生效（防止旧请求覆盖新输入）
         liveTranslateGeneration &+= 1
@@ -583,7 +630,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 仅当仍是最新请求时才更新结果，旧请求直接丢弃
             guard generation == self.liveTranslateGeneration else { return }
             do {
-                let (translation, provider) = try await service.translate(
+                let (translation, provider, fallback) = try await service.translate(
                     trimmed,
                     from: source,
                     to: target
@@ -592,14 +639,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard generation == self.liveTranslateGeneration else { return }
                 model.translatedText = translation
                 model.providerName = provider
-                model.sourceLanguage = source
                 model.collectNotice = ""
+                model.isLiveTranslating = false
+                showFallbackNotice(fallback, in: model)
             } catch is CancellationError {
                 // 请求被取消（被更新输入取代 / 锚点窗口隐藏清队），静默处理不打扰用户
                 return
             } catch {
                 guard generation == self.liveTranslateGeneration else { return }
                 model.translatedText = ""
+                model.isLiveTranslating = false
                 // 带上具体原因，避免只显示「实时翻译失败」无法定位（如 Unable to Translate = 语向不支持/未装包）
                 model.collectNotice = "实时翻译失败：\(error.localizedDescription)"
                 Task { [weak model] in
@@ -630,6 +679,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 交换持久化默认方向：新源 = 原目标，新目标 = 原源
         settings.sourceHint = currentTarget
         settings.targetLanguage = currentSource
+        // 交换后必须解除源语言锁定：交换只是纠正当前语向，不是钉死源语言。
+        // 旧实现把交换后的目标语言写进 manualSourceLanguage，之后所有输入
+        // （包括英文）都被钉成同一个源，英文输入被识别成中文正是这个残留
+        settings.manualSourceLanguage = nil
         // 同时更新面板显示
         model.sourceLanguage = currentTarget
         model.targetLanguage = currentSource
@@ -767,7 +820,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         )
         do {
-            let (translation, _) = try await service.translate(
+            let (translation, _, _) = try await service.translate(
                 trimmed,
                 from: source,
                 to: target
@@ -806,6 +859,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.contentView = NSHostingView(rootView: content)
         window.isReleasedWhenClosed = false
         window.center()
+        // 层级跟随置顶状态：面板置顶在 .floating（3），弹窗若是普通层级（0）会被盖住，
+        // 取 .modalPanel（8）保证生词本/设置等弹窗永远显示在主面板之上
+        window.level = settings.alwaysOnTop ? .modalPanel : .normal
         self[keyPath: key] = window
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -863,12 +919,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return languages
     }
 
-    /// 若检测到的源语言与目标语言相同，自动切换目标为英文
-    /// 例如用户默认目标为中文，截图中文内容时自动改为翻译到英文
+    /// 展示引擎降级提示：主链上有引擎失败、由后续引擎接手时告知用户，
+    /// 避免「自动」模式悄悄落到 Apple 本地后用户疑惑（Google 怎么不工作了）
+    private func showFallbackNotice(_ message: String?, in model: ResultModel) {
+        guard let message, !message.isEmpty else { return }
+        model.collectNotice = message
+        Task { [weak model] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if model?.collectNotice == message {
+                model?.collectNotice = ""
+            }
+        }
+    }
+
+    /// 若检测到的源语言与目标语言相同，自动切换目标，保证任何持久化状态下源文本总能翻出去
+    /// 例如用户默认目标为中文，截图中文内容时自动改为翻译到英文；
+    /// 反向场景（历史交换/设置残留导致目标语言为英文、输入英文）则自愈切到中文，
+    /// 否则源==目标会让引擎原样返回并标记「无需翻译」
     private func effectiveTargetLanguage(source: Language?) -> Language {
         let target = settings.targetLanguage
         guard let source else { return target }
-        if source == target { return .en }
+        if source == target { return target == .en ? .zhHans : .en }
         // 源与目标同为中文简繁变体也按退化处理：Apple 不支持 zh-Hant↔zh-Hans 互译
         // （实测未装包直接抛 Unable to Translate），且简繁转换本就不是翻译需求，
         // 自动切英文保证请求总能落到受支持且已装包的语向上。
@@ -877,16 +948,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return target
     }
 
-    /// 确定源语言：用户手动选择优先，未选择时自动检测。
-    /// 例外：源提示与目标语言相同（X→X 退化配置）时提示无意义——此时自动检测真实文本语言
-    /// （检测失败才退回提示）。否则英文输入会被钉死的中文源按「中→英」翻英文原文，
-    /// Apple 引擎原样返回，表现为「输入内容不翻译」（实时与截图两条链路同坑）。
+    /// 确定源语言，优先级从高到低：
+    /// ① 用户手动锁定的源语言（面板语言菜单选择，选「自动检测」即解锁）
+    /// ② 自动检测；检测失败时返回 nil，交给翻译引擎自动检测——
+    ///    不再回退 sourceHint：hint 是上一次交换语向/菜单选择的残留提示，
+    ///    检测失败的输入（如超短英文「ok」）被 hint 钉成不匹配的源语言
+    ///    （英文被钉成中文源）比「引擎自己检测」更糟
     private func determineSourceLanguage(for text: String) -> Language? {
-        if let hint = settings.sourceHint {
-            if hint == settings.targetLanguage, let detected = LanguageDetector.detect(text) {
-                return detected
-            }
-            return hint
+        if let manual = settings.manualSourceLanguage {
+            return manual
         }
         return LanguageDetector.detect(text)
     }
@@ -930,7 +1000,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 proxy: settings.engineProxy
             )
         )
-        // 更新面板中的实际目标语言（可能已被 effectiveTargetLanguage 自动调整）
+        // 更新面板中的实际语向（可能已被 effectiveTargetLanguage 自动调整）；
+        // 源/目标同一时刻更新，避免目标先变、源等翻译完成才变
+        model.sourceLanguage = source
         model.targetLanguage = target
         Task { [weak self] in
             guard let self else { return }
@@ -942,7 +1014,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             do {
-                let (translation, provider) = try await service.translate(
+                let (translation, provider, fallback) = try await service.translate(
                     text,
                     from: source,
                     to: target
@@ -955,6 +1027,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     preserveTab: preserveTab,
                     addHistory: addHistory
                 )
+                showFallbackNotice(fallback, in: model)
                 self.trimHistory()
             } catch {
                 guard generation == self.translateGeneration else { return }
