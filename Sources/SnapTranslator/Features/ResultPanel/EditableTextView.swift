@@ -30,7 +30,7 @@ struct EditableTextView: NSViewRepresentable {
         applyStyleAndText(to: textView)
         context.coordinator.textView = textView
 
-        let scrollView = NSScrollView()
+        let scrollView = TextPaneScrollView()
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
