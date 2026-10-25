@@ -1039,6 +1039,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let source = determineSourceLanguage(for: text)
         // 若源语言与目标语言相同（如截图中文但目标也是中文），自动改为翻译到英文
         let target = effectiveTargetLanguage(source: source)
+        // 语向决策日志：出现「识别语向不对」类反馈时用
+        // `log show --predicate 'process == "SnapTranslator"'` 直接定位
+        NSLog("STDIAG translate src=%@ tgt=%@ panelManual=%@ settingsManual=%@ detected=%@ textHead=%@",
+              source?.rawValue ?? "nil", target.rawValue,
+              panelManualSource?.rawValue ?? "nil",
+              settings.manualSourceLanguage?.rawValue ?? "nil",
+              LanguageDetector.detect(text)?.rawValue ?? "nil",
+              String(text.prefix(24)))
         // 生成序号，仅最新一次请求的结果生效（防止旧请求覆盖新输入）
         translateGeneration &+= 1
         let generation = translateGeneration

@@ -1,32 +1,40 @@
 import AppKit
 import SwiftUI
 
-/// 专门的 HostingView：重写 acceptsFirstMouse 返回 true，
-/// 确保非 Key 窗口（如副屏遮罩）在收到第一次鼠标点击时立即响应手势，而不会被系统“激活窗口”吞掉。
-/// 同时负责绘制鼠标悬停窗口的高亮框（QQ 式窗口吸附）
-final class OverlayHostingView<Content: View>: NSHostingView<Content> {
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
-    }
-
-    /// 悬停窗口高亮框（视图本地坐标，原点左下）；nil 表示无悬停窗口
-    var hoverHighlightRect: CGRect? {
+/// 悬停窗口高亮框视图（QQ 式窗口吸附的选框效果）：
+/// 半透明蓝色填充 + 描边，覆盖在 SwiftUI 遮罩内容之上。
+/// 不能画在 NSHostingView.draw 里——SwiftUI 内容不经过该绘制路径，画了也看不见
+final class WindowHighlightView: NSView {
+    /// 高亮的窗口矩形（视图本地坐标，原点左下）；nil 表示无悬停窗口
+    var highlightRect: CGRect? {
         didSet {
-            if hoverHighlightRect != oldValue {
+            if highlightRect != oldValue {
                 needsDisplay = true
             }
         }
     }
 
+    override var isFlipped: Bool { false }
+
+    /// 纯装饰视图：不参与命中测试，事件穿透给底下的 SwiftUI 手势
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
     override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        guard let rect = hoverHighlightRect else { return }
-        NSColor.controlAccentColor.withAlphaComponent(0.12).setFill()
+        guard let rect = highlightRect else { return }
+        NSColor.controlAccentColor.withAlphaComponent(0.18).setFill()
         NSBezierPath(rect: rect).fill()
         NSColor.controlAccentColor.setStroke()
-        let border = NSBezierPath(rect: NSInsetRect(rect, 1, 1))
-        border.lineWidth = 2
+        let border = NSBezierPath(rect: NSInsetRect(rect, 1.25, 1.25))
+        border.lineWidth = 2.5
         border.stroke()
+    }
+}
+
+/// 专门的 HostingView：重写 acceptsFirstMouse 返回 true，
+/// 确保非 Key 窗口（如副屏遮罩）在收到第一次鼠标点击时立即响应手势，而不会被系统“激活窗口”吞掉
+final class OverlayHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
     }
 }
 
@@ -47,7 +55,7 @@ final class OverlayWindow: NSWindow {
     private var lastHoverQueryPoint: NSPoint = .zero
     /// CG 全局坐标（主屏左上原点）→ AppKit 坐标换算用的主屏顶边 Y
     private let primaryTopY: CGFloat
-    private var overlayHosting: OverlayHostingView<OverlayView>?
+    private let highlightView = WindowHighlightView()
 
     init(screen: NSScreen, snapshot: CGImage?) {
         self.screenSnapshot = snapshot
@@ -82,8 +90,11 @@ final class OverlayWindow: NSWindow {
             }
         )
         let hosting = OverlayHostingView(rootView: overlay)
-        overlayHosting = hosting
         contentView = hosting
+        // 高亮框视图覆盖在 SwiftUI 遮罩内容之上（QQ 式选框效果）
+        highlightView.frame = hosting.bounds
+        highlightView.autoresizingMask = [.width, .height]
+        hosting.addSubview(highlightView)
     }
 
     override var canBecomeKey: Bool { true }
@@ -137,7 +148,7 @@ final class OverlayWindow: NSWindow {
     private func setHoverWindow(_ rect: CGRect?) {
         guard rect != hoverWindowRect else { return }
         hoverWindowRect = rect
-        overlayHosting?.hoverHighlightRect = rect.map { convertFromScreen($0) }
+        highlightView.highlightRect = rect.map { convertFromScreen($0) }
     }
 
     /// 单击选中窗口：与拖拽框选一致的回调约定（全局 AppKit 坐标 + 屏幕内左上原点局部坐标）

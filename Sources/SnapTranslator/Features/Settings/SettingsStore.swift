@@ -128,6 +128,15 @@ final class SettingsStore: ObservableObject {
             defaults.set(true, forKey: "st.cleanup.manualSwapLock")
             defaults.removeObject(forKey: "st.manualSource")
         }
+        // 一次性清理 v2：旧版面板语言菜单/交换按钮也会把手动源语言持久化到
+        // st.manualSource，升级到「面板选择仅当前内容生效」的版本后，
+        // 该残留仍作为持久锁定压过自动检测（中文截图一直按 英→中 翻）。
+        // 面板选择已改为会话级（不落盘），清掉全部历史残留；
+        // 如确需持久锁定语向，请在 设置 → 通用 → 源语言 重新选择
+        if !defaults.bool(forKey: "st.cleanup.manualSource.v2") {
+            defaults.set(true, forKey: "st.cleanup.manualSource.v2")
+            defaults.removeObject(forKey: "st.manualSource")
+        }
         // 一次性迁移到 GLM-5.2：老用户若仍是旧默认 auto/旧 OpenAI 地址/旧模型，升级后自动切到 GLM
         if !defaults.bool(forKey: "st.migrated.glm52") {
             defaults.set(true, forKey: "st.migrated.glm52")
