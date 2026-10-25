@@ -61,7 +61,7 @@
   --border-strong: #2a3648;
   --text: #e6ebf2;
   --text-2: #a8b4c7;
-  --text-3: #8a99b3;
+  --text-3: #97a5be;
   --accent: #3b82f6;
   --accent-2: #6366f1;
   --accent-soft: rgba(59, 130, 246, 0.12);
@@ -96,6 +96,17 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html { scroll-behavior: smooth; }
+/* 锚点跳转避开 sticky 导航遮挡 */
+section, .hero { scroll-margin-top: 72px; }
+/* 键盘可达性：统一焦点环 */
+a:focus-visible, button:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* 标题排版：浏览器支持时自动平衡断行 */
+h1, h2, h3, .section-title { text-wrap: balance; }
+.hero-sub, .section-sub, .step p, .feature-card p { text-wrap: pretty; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
   background: var(--bg);
@@ -176,6 +187,33 @@ code {
 }
 .lang-switch button.active { background: var(--accent-soft); color: var(--accent); }
 .lang-switch button:not(.active):hover { color: var(--text); }
+
+/* 移动端菜单按钮（≤640px 显示） */
+.menu-btn {
+  display: none;
+  width: 36px; height: 36px;
+  align-items: center; justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-2); font-size: 16px;
+  transition: all 0.2s;
+}
+.menu-btn:hover { color: var(--text); border-color: var(--border-strong); }
+.mobile-menu {
+  display: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--nav-bg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.mobile-menu.open { display: block; }
+.mobile-menu a {
+  display: block; padding: 13px 24px;
+  font-size: 15px; color: var(--text-2);
+  border-top: 1px solid var(--border);
+}
+.mobile-menu a:hover, .mobile-menu a:active { color: var(--text); background: var(--bg-soft); }
 
 /* ============ 按钮 ============ */
 .btn {
@@ -281,6 +319,32 @@ code {
 }
 .demo-tag.hl { background: var(--accent-soft); color: var(--accent); }
 
+/* Hero 演示卡：面板页签与底部操作条（模拟真实应用外观） */
+.demo-tabs { display: flex; gap: 5px; }
+.demo-tab {
+  font-size: 11.5px; padding: 3px 11px; border-radius: 7px;
+  color: var(--text-3); background: transparent;
+}
+.demo-tab.active { background: var(--bg-soft); color: var(--text); font-weight: 600; }
+.demo-meta {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 6px; padding-top: 12px;
+  border-top: 1px dashed var(--border);
+  color: var(--text-3); font-size: 11.5px;
+}
+.demo-engine {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 6px;
+  background: var(--accent-soft); color: var(--accent); font-weight: 600;
+}
+.demo-actions { margin-left: auto; display: flex; gap: 6px; }
+.demo-action {
+  width: 22px; height: 22px; display: grid; place-items: center;
+  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-3); background: transparent;
+}
+.demo-action svg { width: 12px; height: 12px; }
+
 /* ============ 通用 Section ============ */
 section { padding: 78px 0; }
 .section-head { text-align: center; margin-bottom: 52px; }
@@ -313,6 +377,16 @@ section { padding: 78px 0; }
 }
 .step h3 { font-size: 16px; margin-bottom: 7px; }
 .step p { color: var(--text-2); font-size: 13.8px; line-height: 1.6; }
+/* 桌面端步骤卡之间的连接短线（末卡不含） */
+@media (min-width: 921px) {
+  .step:not(:last-child)::after {
+    content: ""; position: absolute;
+    top: 40px; left: calc(100% + 5px);
+    width: 8px; height: 2px;
+    background: var(--border-strong);
+    border-radius: 2px;
+  }
+}
 
 /* ============ 功能网格 ============ */
 .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
@@ -470,10 +544,15 @@ section { padding: 78px 0; }
 @media (max-width: 640px) {
   .code-block { font-size: 12px; padding: 16px 18px; }
   .nav-links { display: none; }
+  .nav-inner { gap: 10px; padding: 12px 18px; }
+  .menu-btn { display: inline-flex; }
+  .nav-inner .btn-sm { display: none; }
   .steps, .feature-grid { grid-template-columns: 1fr; }
   .footer-grid { grid-template-columns: 1fr; gap: 28px; }
   .footer-bottom { flex-direction: column; align-items: flex-start; }
   .hero-meta { gap: 14px; }
+  .hero { padding: 48px 18px; }
+  section { padding: 56px 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -507,8 +586,19 @@ section { padding: 78px 0; }
         <span id="themeIcon">☀️</span>
       </button>
       <a class="btn btn-primary btn-sm" href="#install" data-i18n="nav.download">下载</a>
+      <button class="menu-btn" id="menuToggle" aria-label="打开菜单" aria-expanded="false" aria-controls="mobileMenu">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
     </div>
   </div>
+  <nav class="mobile-menu" id="mobileMenu" aria-label="移动端导航">
+    <a href="#how" data-i18n="nav.how">使用流程</a>
+    <a href="#features" data-i18n="nav.features">功能</a>
+    <a href="#engines" data-i18n="nav.engines">翻译引擎</a>
+    <a href="#install" data-i18n="nav.install">安装</a>
+    <a href="#faq" data-i18n="nav.faq">FAQ</a>
+    <a href="#install" data-i18n="nav.download" style="color: var(--accent); font-weight: 600;">下载</a>
+  </nav>
 </header>
 
 <!-- ================= Hero ================= -->
@@ -534,8 +624,22 @@ section { padding: 78px 0; }
     <div class="demo-card">
       <div class="demo-bar"><i></i><i></i><i></i><span data-i18n="demo.title">翻译结果</span></div>
       <div class="demo-body">
+        <div class="demo-tabs">
+          <span class="demo-tag">识别</span>
+          <span class="demo-tab active">翻译</span>
+          <span class="demo-tag">对照</span>
+          <span class="demo-tag">对比</span>
+        </div>
         <div class="demo-line demo-src">The quick brown fox jumps over the lazy dog.</div>
         <div class="demo-line demo-dst">敏捷的棕色狐狸跳过了懒狗。</div>
+        <div class="demo-meta">
+          <span class="demo-engine">⚡ GLM-5.2</span>
+          <span>0.4s</span>
+          <span class="demo-actions">
+            <span class="demo-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/></svg></span>
+            <span class="demo-action"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4h12v17l-6-4-6 4z"/></svg></span>
+          </span>
+        </div>
         <div class="demo-tags">
           <span class="demo-tag" data-i18n="demo.src">原文</span>
           <span class="demo-tag hl" data-i18n="demo.dst">译文</span>
@@ -562,7 +666,7 @@ section { padding: 78px 0; }
       <div class="step">
         <div class="step-num">2</div>
         <h3 data-i18n="how.s2t">框选区域</h3>
-        <p data-i18n="how.s2p">拖动鼠标框选要翻译的屏幕区域，松开即自动识别文字，无需二次点击。</p>
+        <p data-i18n="how.s2p">拖动鼠标自由框选，或悬停自动高亮窗口、单击选中整窗（窗口吸附）。松开即自动识别文字，ESC / 右键取消。</p>
       </div>
       <div class="step">
         <div class="step-num">3</div>
@@ -590,7 +694,7 @@ section { padding: 78px 0; }
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="14" rx="2"/><circle cx="12" cy="13" r="3.5"/><path d="M8 6l1.5-2.5h5L16 6"/></svg></div>
         <h3 data-i18n="feat.f1t">截屏翻译</h3>
-        <p data-i18n="feat.f1p">全局快捷键唤起框选，每屏独立遮罩，实时显示尺寸。松开鼠标即完成 OCR 与翻译。</p>
+        <p data-i18n="feat.f1p">全局快捷键唤起框选，支持 QQ 式窗口吸附（悬停高亮、单击选窗），松开鼠标即完成 OCR 与翻译。</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 014-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 01-4 4H3"/></svg></div>
@@ -605,7 +709,7 @@ section { padding: 78px 0; }
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg></div>
         <h3 data-i18n="feat.f4t">12 种语言互译</h3>
-        <p data-i18n="feat.f4p">中、英、日、韩、法、德等 12 种语言双向互译，一键交换源/目标语言立即重译。</p>
+        <p data-i18n="feat.f4p">12 种语言双向互译，源语言自动检测、语向自动切换（中↔英等），也可一键交换源/目标语言立即重译。</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17v5M9 3h6l-1 7 4 4H6l4-4-1-7z"/></svg></div>
@@ -693,22 +797,22 @@ section { padding: 78px 0; }
         <div class="install-step">
           <div class="step-num">1</div>
           <div>
-            <h3 data-i18n="ins.s1t">克隆仓库并构建</h3>
-            <p data-i18n="ins.s1p">运行 make-app.sh 脚本，自动编译并打包为 SnapTranslator.app。</p>
+            <h3 data-i18n="ins.s1t">克隆并一键安装</h3>
+            <p data-i18n="ins.s1p">运行 make-app.sh --install，自动编译、打包为 .app、安装到 /Applications 并启动。</p>
           </div>
         </div>
         <div class="install-step">
           <div class="step-num">2</div>
           <div>
-            <h3 data-i18n="ins.s2t">移动到应用程序</h3>
-            <p data-i18n="ins.s2p">将生成的 .app 复制到 /Applications 目录并打开。</p>
+            <h3 data-i18n="ins.s2t">授予屏幕录制权限</h3>
+            <p data-i18n="ins.s2p">首次截屏时系统会请求「屏幕录制」权限，在系统设置中勾选并重启应用即可。</p>
           </div>
         </div>
         <div class="install-step">
           <div class="step-num">3</div>
           <div>
-            <h3 data-i18n="ins.s3t">授权并开始使用</h3>
-            <p data-i18n-html="ins.s3p">首次截屏时授予「屏幕录制」权限，然后按 <kbd>⌥S</kbd> 即可开始翻译。</p>
+            <h3 data-i18n="ins.s3t">开始使用</h3>
+            <p data-i18n-html="ins.s3p">按 <kbd>⌥S</kbd> 框选屏幕任意区域，松开即翻译；<kbd>⌥⇧S</kbd> 重截上次区域。</p>
           </div>
         </div>
       </div>
@@ -717,10 +821,10 @@ section { padding: 78px 0; }
 <span class="cmd">git clone</span> <span class="url">https://<wbr>github.com/<wbr>ideshun/<wbr>SnapTranslator.git</span>
 <span class="cmd">cd</span> SnapTranslator
 
-<span class="cm" data-i18n="ins.cm2"># 构建（产物约 1MB）</span>
-<span class="cmd">./make-app.sh</span>
+<span class="cm" data-i18n="ins.cm2"># 一键构建 + 安装并启动</span>
+<span class="cmd">./make-app.sh --install</span>
 
-<span class="cm" data-i18n="ins.cm3"># 安装到应用程序目录</span>
+<span class="cm" data-i18n="ins.cm3"># 或手动安装</span>
 <span class="cmd">cp -R</span> build/SnapTranslator.app /Applications/
 <span class="cmd">open</span> /Applications/SnapTranslator.app</div>
     </div>
@@ -797,7 +901,7 @@ section { padding: 78px 0; }
       </div>
     </div>
     <div class="footer-bottom">
-      <span data-i18n="footer.copyright">© 2025 ideshun · SnapTranslator 遵循 MIT 协议开源</span>
+      <span data-i18n="footer.copyright">© 2025-2026 ideshun · SnapTranslator 遵循 MIT 协议开源</span>
       <div class="footer-links">
         <a href="https://github.com/ideshun/SnapTranslator" target="_blank" rel="noopener" aria-label="GitHub">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
@@ -827,15 +931,15 @@ section { padding: 78px 0; }
       "how.eyebrow": "WORKFLOW", "how.title": "四步完成一次翻译",
       "how.sub": "无需切换窗口，无需复制粘贴，翻译就在指尖。",
       "how.s1t": "按下快捷键", "how.s1p": "任意界面按下 <kbd>⌥S</kbd>，屏幕出现框选遮罩。再次按下 <kbd>⌥⇧S</kbd> 可直接重截上次区域。",
-      "how.s2t": "框选区域", "how.s2p": "拖动鼠标框选要翻译的屏幕区域，松开即自动识别文字，无需二次点击。",
+      "how.s2t": "框选区域", "how.s2p": "拖动鼠标自由框选，或悬停自动高亮窗口、单击选中整窗（窗口吸附）。松开即自动识别文字，ESC / 右键取消。",
       "how.s3t": "查看译文", "how.s3p": "翻译结果面板自动置顶显示，支持原文/译文/并排三种视图，一键复制或收藏生词。",
       "how.s4t": "随时调用", "how.s4p": "应用常驻菜单栏，关窗不退出。看论文、读文档、追字幕，随时唤起。",
       "feat.eyebrow": "FEATURES", "feat.title": "专注截屏翻译这一件事",
       "feat.sub": "砍掉词典、广告、背单词等冗余功能，保留翻译核心体验。",
-      "feat.f1t": "截屏翻译", "feat.f1p": "全局快捷键唤起框选，每屏独立遮罩，实时显示尺寸。松开鼠标即完成 OCR 与翻译。",
+      "feat.f1t": "截屏翻译", "feat.f1p": "全局快捷键唤起框选，支持 QQ 式窗口吸附（悬停高亮、单击选窗），松开鼠标即完成 OCR 与翻译。",
       "feat.f2t": "重截上次区域", "feat.f2p": "字幕、日志、聊天窗口等固定区域，按 ⌥⇧S 一键重截，连续翻译不中断。",
       "feat.f3t": "原文/译文对照", "feat.f3p": "原图、译文、并排三种视图自由切换。并排模式左右皆为图片，逐句对照更直观。",
-      "feat.f4t": "12 种语言互译", "feat.f4p": "中、英、日、韩、法、德等 12 种语言双向互译，一键交换源/目标语言立即重译。",
+      "feat.f4t": "12 种语言互译", "feat.f4p": "12 种语言双向互译，源语言自动检测、语向自动切换（中↔英等），也可一键交换源/目标语言立即重译。",
       "feat.f5t": "结果面板置顶", "feat.f5p": "翻译面板常驻屏幕最上层，失焦自动降低透明度。支持拖动、缩放与位置记忆。",
       "feat.f6t": "生词本", "feat.f6p": "选中文字右键收藏到生词本，支持搜索、删除与 CSV 导出，随时随地复习。",
       "feat.f7t": "菜单栏驻留", "feat.f7p": "关闭窗口不退出应用，所有功能从菜单栏直达。支持开机自启，也可切换为纯菜单栏模式。",
@@ -852,11 +956,11 @@ section { padding: 78px 0; }
       "eng.noteT": "离线优先：", "eng.noteP": "主引擎选「Apple 系统翻译」，识别与翻译均在本地完成；该引擎失败时会自动降级到云引擎。当前版本无强制离线开关，需要绝对离线请断网使用。",
       "ins.eyebrow": "INSTALL", "ins.title": "从源码构建，一分钟完成",
       "ins.sub": "需要 macOS 14+ 与 Xcode（注意：macOS 27 SDK 起纯 Command Line Tools 缺少 SwiftUI 宏插件，无法编译）。",
-      "ins.s1t": "克隆仓库并构建", "ins.s1p": "运行 make-app.sh 脚本，自动编译并打包为 SnapTranslator.app。",
-      "ins.s2t": "移动到应用程序", "ins.s2p": "将生成的 .app 复制到 /Applications 目录并打开。",
-      "ins.s3t": "授权并开始使用", "ins.s3p": "首次截屏时授予「屏幕录制」权限，然后按 <kbd>⌥S</kbd> 即可开始翻译。",
+      "ins.s1t": "克隆并一键安装", "ins.s1p": "运行 make-app.sh --install，自动编译、打包为 .app、安装到 /Applications 并启动。",
+      "ins.s2t": "授予屏幕录制权限", "ins.s2p": "首次截屏时系统会请求「屏幕录制」权限，在系统设置中勾选并重启应用即可。",
+      "ins.s3t": "开始使用", "ins.s3p": "按 <kbd>⌥S</kbd> 框选屏幕任意区域，松开即翻译；<kbd>⌥⇧S</kbd> 重截上次区域。",
       "ins.copy": "复制", "ins.copied": "已复制",
-      "ins.cm1": "# 克隆仓库", "ins.cm2": "# 构建（产物约 1MB）", "ins.cm3": "# 安装到应用程序目录",
+      "ins.cm1": "# 克隆仓库", "ins.cm2": "# 一键构建 + 安装并启动", "ins.cm3": "# 或手动安装",
       "ins.req": "仅需屏幕录制权限 · 无需辅助功能权限 · 云引擎按需联网",
       "faq.title": "常见问题",
       "faq.q1": "和付费的屏幕翻译应用有什么区别？",
@@ -872,8 +976,10 @@ section { padding: 78px 0; }
       "footer.desc": "轻量级 macOS 截屏翻译工具。开源免费，离线可用，零第三方依赖。",
       "footer.product": "产品", "footer.resources": "资源", "footer.tech": "技术栈",
       "footer.issues": "问题反馈", "footer.releases": "发布记录",
-      "footer.copyright": "© 2025 ideshun · SnapTranslator 遵循 MIT 协议开源",
-      "footer.top": "回到顶部 ↑"
+      "footer.copyright": "© 2025-2026 ideshun · SnapTranslator 遵循 MIT 协议开源",
+      "footer.top": "回到顶部 ↑",
+      "theme.toLight": "切换到浅色模式", "theme.toDark": "切换到深色模式",
+      "menu.open": "打开菜单", "menu.close": "收起菜单"
     },
     en: {
       "nav.how": "Workflow", "nav.features": "Features", "nav.engines": "Engines",
@@ -887,15 +993,15 @@ section { padding: 78px 0; }
       "how.eyebrow": "WORKFLOW", "how.title": "Translate in four steps",
       "how.sub": "No window switching, no copy-pasting. Translation at your fingertips.",
       "how.s1t": "Press the hotkey", "how.s1p": "Press <kbd>⌥S</kbd> anywhere to bring up the selection overlay. Press <kbd>⌥⇧S</kbd> to re-capture the last region.",
-      "how.s2t": "Select a region", "how.s2p": "Drag to select any area on your screen. Release to recognize text instantly — no extra click needed.",
+      "how.s2t": "Select a region", "how.s2p": "Drag to select freely, or hover to highlight a window and click to capture it (window snapping). Text is recognized on release; ESC / right-click to cancel.",
       "how.s3t": "Read the translation", "how.s3p": "The result panel stays on top with source, translation, and side-by-side views. Copy or save words with one click.",
       "how.s4t": "Always within reach", "how.s4p": "Lives in your menu bar and never quits when you close the window. Perfect for papers, docs, and subtitles.",
       "feat.eyebrow": "FEATURES", "feat.title": "Focused on one thing: screen translation",
       "feat.sub": "No dictionaries, no ads, no flashcards — just the core translation experience.",
-      "feat.f1t": "Screenshot Translation", "feat.f1p": "Global hotkey brings up a per-screen overlay with live dimensions. Release the mouse to OCR and translate.",
+      "feat.f1t": "Screenshot Translation", "feat.f1p": "Global hotkey with a per-screen overlay. Hover to snap to a window or drag a region — release the mouse to OCR and translate.",
       "feat.f2t": "Re-capture Last Region", "feat.f2p": "Subtitles, logs, chat windows — press ⌥⇧S to re-capture the same region for continuous translation.",
       "feat.f3t": "Side-by-side View", "feat.f3p": "Switch between original, translation, and side-by-side views. Compare line by line with image rendering.",
-      "feat.f4t": "12 Languages", "feat.f4p": "Two-way translation among Chinese, English, Japanese, Korean, French, German and more. Swap source/target with one click.",
+      "feat.f4t": "12 Languages", "feat.f4p": "Two-way translation across 12 languages with automatic source detection and direction switching (ZH ↔ EN etc.). Swap source/target with one click.",
       "feat.f5t": "Always-on-top Panel", "feat.f5p": "The result panel floats above other windows and fades when unfocused. Drag, resize, and position memory included.",
       "feat.f6t": "Wordbook", "feat.f6p": "Right-click any selected text to save it to your wordbook. Search, delete, and export to CSV anytime.",
       "feat.f7t": "Menu Bar App", "feat.f7p": "Closing the window never quits the app. Access everything from the menu bar, with optional launch at login.",
@@ -912,11 +1018,11 @@ section { padding: 78px 0; }
       "eng.noteT": "Offline first: ", "eng.noteP": "Set the primary engine to Apple Translation and both OCR and translation run on-device. Note that a failing Apple engine falls back to cloud engines — there is no strict offline switch; disconnect the network if you must never go online.",
       "ins.eyebrow": "INSTALL", "ins.title": "Build from source in a minute",
       "ins.sub": "Requires macOS 14+ and Xcode (note: since the macOS 27 SDK, Command Line Tools alone lack the SwiftUI macro plugin and cannot build this project).",
-      "ins.s1t": "Clone and build", "ins.s1p": "Run make-app.sh to compile and package SnapTranslator.app automatically.",
-      "ins.s2t": "Move to Applications", "ins.s2p": "Copy the generated .app into /Applications and open it.",
-      "ins.s3t": "Grant permission & go", "ins.s3p": "Grant Screen Recording on first capture, then press <kbd>⌥S</kbd> to start translating.",
+      "ins.s1t": "Clone & install in one step", "ins.s1p": "Run make-app.sh --install to compile, package, install to /Applications and launch automatically.",
+      "ins.s2t": "Grant Screen Recording", "ins.s2p": "On first capture, macOS asks for Screen Recording permission. Enable it in System Settings and relaunch.",
+      "ins.s3t": "Start translating", "ins.s3p": "Press <kbd>⌥S</kbd> and select any area — translation appears on release. <kbd>⌥⇧S</kbd> re-captures the last region.",
       "ins.copy": "Copy", "ins.copied": "Copied",
-      "ins.cm1": "# Clone the repo", "ins.cm2": "# Build (output ~1MB)", "ins.cm3": "# Install to Applications",
+      "ins.cm1": "# Clone the repo", "ins.cm2": "# Build, install and launch in one step", "ins.cm3": "# Or install manually",
       "ins.req": "Screen recording only · No accessibility access · Cloud engines on demand",
       "faq.title": "Frequently Asked Questions",
       "faq.q1": "How is it different from paid screen translators?",
@@ -932,8 +1038,10 @@ section { padding: 78px 0; }
       "footer.desc": "A lightweight screenshot translator for macOS. Open source, offline-capable, zero third-party dependencies.",
       "footer.product": "Product", "footer.resources": "Resources", "footer.tech": "Built With",
       "footer.issues": "Issues", "footer.releases": "Releases",
-      "footer.copyright": "© 2025 ideshun · SnapTranslator is open source under the MIT License",
-      "footer.top": "Back to top ↑"
+      "footer.copyright": "© 2025-2026 ideshun · SnapTranslator is open source under the MIT License",
+      "footer.top": "Back to top ↑",
+      "theme.toLight": "Switch to light mode", "theme.toDark": "Switch to dark mode",
+      "menu.open": "Open menu", "menu.close": "Close menu"
     }
   };
 
@@ -941,11 +1049,17 @@ section { padding: 78px 0; }
   const root = document.documentElement;
   const themeToggle = document.getElementById("themeToggle");
   const themeIcon = document.getElementById("themeIcon");
+  let currentLang = "zh";
+
+  function t(key) {
+    const dict = I18N[currentLang] || I18N.zh;
+    return dict[key] || I18N.zh[key] || key;
+  }
 
   function setTheme(theme, save) {
     root.setAttribute("data-theme", theme);
     themeIcon.textContent = theme === "dark" ? "☀️" : "🌙";
-    themeToggle.title = theme === "dark" ? "切换到浅色模式" : "切换到深色模式";
+    themeToggle.title = theme === "dark" ? t("theme.toLight") : t("theme.toDark");
     if (save) {
       try { localStorage.setItem("st-theme", theme); } catch (e) {}
     }
@@ -982,6 +1096,7 @@ section { padding: 78px 0; }
 
   function setLang(lang, save) {
     const dict = I18N[lang] || I18N.zh;
+    currentLang = lang;
     root.setAttribute("lang", lang === "zh" ? "zh-CN" : "en");
 
     document.querySelectorAll("[data-i18n]").forEach(function (el) {
@@ -996,6 +1111,9 @@ section { padding: 78px 0; }
     langBtns.forEach(function (b) {
       b.classList.toggle("active", b.getAttribute("data-lang") === lang);
     });
+
+    // 主题按钮标题与菜单状态文案跟随语言
+    setTheme(root.getAttribute("data-theme") || "dark", false);
 
     if (save) {
       try { localStorage.setItem("st-lang", lang); } catch (e) {}
@@ -1018,6 +1136,23 @@ section { padding: 78px 0; }
       setLang(btn.getAttribute("data-lang"), true);
     });
   });
+
+  /* ================= 移动端菜单 ================= */
+  const menuToggle = document.getElementById("menuToggle");
+  const mobileMenu = document.getElementById("mobileMenu");
+  if (menuToggle && mobileMenu) {
+    menuToggle.addEventListener("click", function () {
+      const open = mobileMenu.classList.toggle("open");
+      menuToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      menuToggle.setAttribute("aria-label", open ? t("menu.close") : t("menu.open"));
+    });
+    mobileMenu.querySelectorAll("a").forEach(function (a) {
+      a.addEventListener("click", function () {
+        mobileMenu.classList.remove("open");
+        menuToggle.setAttribute("aria-expanded", "false");
+      });
+    });
+  }
 
   /* ================= FAQ 手风琴 ================= */
   const details = document.querySelectorAll(".faq-list details");
