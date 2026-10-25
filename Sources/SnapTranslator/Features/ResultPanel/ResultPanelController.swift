@@ -38,6 +38,11 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
         panel?.isVisible ?? false
     }
 
+    /// 诊断用（--ui-diag）：面板内容视图，供离屏渲染提取文本
+    var diagContentView: NSView? {
+        ensurePanel().contentView
+    }
+
     private func ensurePanel() -> NSPanel {
         if let panel {
             return panel

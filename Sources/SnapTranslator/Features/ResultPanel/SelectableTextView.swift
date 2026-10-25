@@ -23,7 +23,7 @@ struct SelectableTextView: NSViewRepresentable {
         textView.onSelectionChange = onSelectionChange
         textView.onCollect = onCollect
 
-        let scrollView = NSScrollView()
+        let scrollView = TextPaneScrollView()
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true

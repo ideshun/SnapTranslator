@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import PDFKit
 import SwiftUI
 
 /// 应用中枢：菜单栏、快捷键、流程编排（截屏 → OCR → 翻译 → 面板）
@@ -25,6 +26,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var liveTranslateDebounce: Task<Void, Never>?
     /// 普通翻译请求序号，用于丢弃过期请求结果
     private var translateGeneration: UInt = 0
+    /// 面板内手动选择的源语言（语言菜单 / 交换按钮）：
+    /// 仅作用于当前内容，新截屏自动解除并恢复自动检测——
+    /// 否则「上次手选英→中」会让之后所有中文截图都按英文源翻译。
+    /// 持久锁定请用 设置 → 通用 → 源语言（settings.manualSourceLanguage）
+    private var panelManualSource: Language?
     /// OCR 请求序号，用于丢弃过期 OCR 结果
     /// （快速连续截屏/重试时，旧 OCR 若后完成会用旧文本覆盖新截图的面板状态）
     private var ocrGeneration: UInt = 0
@@ -464,11 +470,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - 语言切换
 
-    /// 用户从状态栏选择源语言后：记录手动锁定并重新翻译当前文本。
+    /// 用户从状态栏选择源语言后：记录面板级临时锁定并重新翻译当前文本。
     /// 选择 nil（自动检测）= 解除锁定，恢复自动检测。
+    /// 该锁定只影响当前内容，下一次截屏会自动解除（自动检测接管）
     private func handleSourceLanguageChange(_ lang: Language?) {
-        // 手动锁定优先于一切自动逻辑（检测/交换语向都不能覆盖用户选择）
-        settings.manualSourceLanguage = lang
+        panelManualSource = lang
         // 同步 hint，保持 OCR 语言集等其他读取方一致
         settings.sourceHint = lang
         // 如有当前文本，重新翻译
@@ -678,7 +684,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let currentTarget = model.targetLanguage
         let detectedSource = !model.sourceText.isEmpty ? LanguageDetector.detect(model.sourceText) : nil
         let currentSource: Language
-        if let manual = settings.manualSourceLanguage {
+        if let panel = panelManualSource {
+            currentSource = panel
+        } else if let manual = settings.manualSourceLanguage {
             currentSource = manual
         } else if let modelSrc = model.sourceLanguage {
             currentSource = modelSrc
@@ -697,8 +705,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             newTarget = (newSource == .zhHans ? .en : .zhHans)
         }
 
-        // 3. 用户手动交换具有最高优先级：锁定 manualSourceLanguage 与 targetLanguage
-        settings.manualSourceLanguage = newSource
+        // 3. 交换语向是面板级临时锁定（新截屏自动解除自动检测），
+        //    仅目标语言作为偏好持久化
+        panelManualSource = newSource
         settings.sourceHint = newSource
         settings.targetLanguage = newTarget
 
@@ -913,9 +922,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ocrGeneration &+= 1
         let generation = ocrGeneration
         model.phase = .recognizing
-        // 全新截屏（非重试）时：若设置中未锁定源语言（自动检测），重置上一次面板内的临时锁定，使新截图自动检测
-        if addHistory && settings.sourceHint == nil {
-            settings.manualSourceLanguage = nil
+        // 全新截屏（非重试）：解除面板内的临时手动语向，恢复自动检测；
+        // 设置页的源语言锁定是持久偏好，不在此清除
+        if addHistory {
+            panelManualSource = nil
         }
         Task { [weak self] in
             guard let self else { return }
@@ -974,9 +984,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 否则源==目标会让引擎原样返回并标记「无需翻译」
     private func effectiveTargetLanguage(source: Language?) -> Language {
         let target = settings.targetLanguage
-        // 核心：若用户手动指定了源语言（manualSourceLanguage != nil，含 exchange 切换），
+        // 核心：若用户手动指定了源语言（面板临时锁定或设置页持久锁定），
         // 用户的选择优先级最高，绝不擅自篡改目标语言
-        if settings.manualSourceLanguage != nil {
+        if settings.manualSourceLanguage != nil || panelManualSource != nil {
             return target
         }
         guard let source else { return target }
@@ -990,12 +1000,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// 确定源语言，优先级从高到低：
-    /// ① 用户手动锁定的源语言（面板语言菜单选择，选「自动检测」即解锁）
-    /// ② 自动检测；检测失败时返回 nil，交给翻译引擎自动检测——
+    /// ① 面板内临时锁定的源语言（语言菜单选择 / 交换语向，新截屏自动解除）
+    /// ② 设置页持久锁定的源语言
+    /// ③ 自动检测；检测失败时返回 nil，交给翻译引擎自动检测——
     ///    不再回退 sourceHint：hint 是上一次交换语向/菜单选择的残留提示，
     ///    检测失败的输入（如超短英文「ok」）被 hint 钉成不匹配的源语言
     ///    （英文被钉成中文源）比「引擎自己检测」更糟
     private func determineSourceLanguage(for text: String) -> Language? {
+        if let panel = panelManualSource {
+            return panel
+        }
         if let manual = settings.manualSourceLanguage {
             return manual
         }
@@ -1025,6 +1039,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let source = determineSourceLanguage(for: text)
         // 若源语言与目标语言相同（如截图中文但目标也是中文），自动改为翻译到英文
         let target = effectiveTargetLanguage(source: source)
+        // 语向决策日志：出现「识别语向不对」类反馈时用
+        // `log show --predicate 'process == "SnapTranslator"'` 直接定位
+        NSLog("STDIAG translate src=%@ tgt=%@ panelManual=%@ settingsManual=%@ detected=%@ textHead=%@",
+              source?.rawValue ?? "nil", target.rawValue,
+              panelManualSource?.rawValue ?? "nil",
+              settings.manualSourceLanguage?.rawValue ?? "nil",
+              LanguageDetector.detect(text)?.rawValue ?? "nil",
+              String(text.prefix(24)))
         // 生成序号，仅最新一次请求的结果生效（防止旧请求覆盖新输入）
         translateGeneration &+= 1
         let generation = translateGeneration
@@ -1146,5 +1168,124 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.messageText = message
         alert.informativeText = error?.localizedDescription ?? "可能是快捷键与其他应用冲突，请在设置中更换键位。"
         alert.runModal()
+    }
+
+    // MARK: - 界面诊断（--ui-diag）
+
+    /// 界面诊断：测试图走真实 OCR + 翻译管线，然后逐页签离屏渲染面板提取 PDF 文本，
+    /// 验证各页签内容是否真正进入渲染树。返回值 0 = 全部通过
+    func runUIDiagnostic() -> Int32 {
+        let model = panelController.model
+        print("== UI 诊断开始 ==")
+
+        handleCaptured(
+            image: Self.makeDiagTestImage(),
+            rect: NSRect(x: 120, y: 480, width: 600, height: 240)
+        )
+
+        // 自旋等待 OCR + 翻译完成（最长 60s，不阻塞主 RunLoop）
+        let deadline = Date().addingTimeInterval(60)
+        loop: while Date() < deadline {
+            switch model.phase {
+            case .done, .failed: break loop
+            default: RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+        }
+
+        if case .failed(let message) = model.phase {
+            print("RESULT phase=failed message=\(message)")
+        }
+        print(String(
+            format: "RESULT phase=%@ tab=%@ srcChars=%d dstChars=%d provider=%@ srcLang=%@",
+            "\(model.phase)", model.tab.rawValue, model.sourceText.count, model.translatedText.count,
+            model.providerName, model.sourceLanguage?.rawValue ?? "nil"
+        ))
+        print("SOURCE=\(model.sourceText.prefix(160))")
+        print("TRANSLATED=\(model.translatedText.prefix(160))")
+        guard case .done = model.phase, !model.sourceText.isEmpty else { return 1 }
+
+        // 逐页签离屏渲染，提取 PDF 文本验证
+        var failures: Int32 = 0
+        let checks: [(ResultModel.Tab, String, String)] = [
+            (.recognize, "识别", "DIAGNOSTIC"),
+            (.translation, "翻译", String(model.translatedText.prefix(6))),
+            (.sideBySide, "对照", String(model.translatedText.prefix(6))),
+        ]
+        for (tab, name, needle) in checks {
+            model.tab = tab
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.6))
+            let text = Self.pdfText(of: panelController.diagContentView)
+            let hit = !needle.isEmpty && text.contains(needle)
+            print("TAB \(name) pdfChars=\(text.count) contains(\(needle))=\(hit)")
+            if !hit {
+                failures += 1
+                // 仅失败时打印视图树辅助定位（如文本视图零宽之类的问题）
+                Self.dumpFullTree(of: panelController.diagContentView, depth: 0)
+            }
+        }
+        // 对比页签无文本要求，仅验证可渲染出非空内容
+        model.tab = .oneToOne
+        RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.6))
+        let oneToOnePdf = Self.pdfDataLength(of: panelController.diagContentView)
+        print("TAB 对比 pdfBytes=\(oneToOnePdf)")
+        if oneToOnePdf < 1000 { failures += 1 }
+
+        print("== UI 诊断结束：\(failures == 0 ? "全部通过" : "\(failures) 项失败") ==")
+        return failures
+    }
+
+    /// 诊断测试图：白底黑字，含英文标识词与中文句子
+    private static func makeDiagTestImage() -> NSImage {
+        let size = NSSize(width: 600, height: 240)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSColor.white.setFill()
+        NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
+        NSColor.black.set()
+        ("DIAGNOSTIC Hello World" as NSString).draw(
+            at: NSPoint(x: 24, y: 170),
+            withAttributes: [.font: NSFont.systemFont(ofSize: 30, weight: .bold)]
+        )
+        ("这是界面诊断的中文测试句子，用于验证整体流程。" as NSString).draw(
+            at: NSPoint(x: 24, y: 100),
+            withAttributes: [.font: NSFont.systemFont(ofSize: 24)]
+        )
+        image.unlockFocus()
+        return image
+    }
+
+    /// 离屏渲染视图并提取 PDF 第一页文本
+    private static func pdfText(of view: NSView?) -> String {
+        guard let view else { return "" }
+        view.layoutSubtreeIfNeeded()
+        let data = view.dataWithPDF(inside: view.bounds)
+        guard let document = PDFDocument(data: data), let page = document.page(at: 0) else {
+            return ""
+        }
+        return page.string ?? ""
+    }
+
+    private static func pdfDataLength(of view: NSView?) -> Int {
+        guard let view else { return 0 }
+        view.layoutSubtreeIfNeeded()
+        return view.dataWithPDF(inside: view.bounds).count
+    }
+
+    /// 诊断用：打印完整视图树（含 NSScrollView 的 documentView 状态）
+    private static func dumpFullTree(of view: NSView?, depth: Int) {
+        guard let view, depth < 11 else { return }
+        var extra = ""
+        if let scrollView = view as? NSScrollView {
+            let doc = scrollView.documentView
+            let docText = (doc as? NSTextView)?.string ?? ""
+            extra = " doc=\(doc.map { String(describing: type(of: $0)) } ?? "nil") docFrame=\(doc?.frame ?? .zero) docChars=\(docText.count) clipSubs=\(scrollView.contentView.subviews.count)"
+        }
+        if let textView = view as? NSTextView {
+            extra = " textChars=\(textView.string.count)"
+        }
+        print("  TREE \(String(repeating: " ", count: depth * 2))\(String(describing: type(of: view))) frame=\(view.frame)\(extra)")
+        for sub in view.subviews {
+            dumpFullTree(of: sub, depth: depth + 1)
+        }
     }
 }
