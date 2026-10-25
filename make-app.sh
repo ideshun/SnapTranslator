@@ -16,9 +16,9 @@ cp .build/release/SnapTranslator "$APP/Contents/MacOS/SnapTranslator"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
 # ---- 生成 AppIcon.icns（程序坞图标）----
-# 从 Resources/AppIcon.png 用 sips 生成多尺寸 iconset，再用 iconutil 打包为 icns
+# 从应用图标资源用 sips 生成多尺寸 iconset，再用 iconutil 打包为 icns
 ICONSET="build/AppIcon.iconset"
-ICON_SRC="Resources/AppIcon.png"
+ICON_SRC="Resources/SnapTranslator-AppIcon-v6.png"
 if [ -f "$ICON_SRC" ]; then
     echo "==> 生成程序坞图标 AppIcon.icns"
     rm -rf "$ICONSET"
