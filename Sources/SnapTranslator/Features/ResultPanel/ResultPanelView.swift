@@ -26,6 +26,9 @@ struct ResultPanelView: View {
     @State private var retryAngle: Double = 0
     @State private var swapAngle: Double = 0
     @State private var hoveredTab: ResultModel.Tab?
+    /// 1:1 译文覆盖图缓存：覆盖渲染含整图解码与逐行绘制，成本高，
+    /// key 未变时必须复用，不能随任何面板状态变化在 body 里重跑
+    @State private var coverCache = CoverRenderCache()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -604,11 +607,7 @@ struct ResultPanelView: View {
         ocrLines: [(text: String, rect: CGRect)],
         syncGroupID: String? = nil
     ) -> some View {
-        if let coveredImage = Self.renderPositionedCoverImage(
-            image: image,
-            translation: translation,
-            ocrLines: ocrLines
-        ) {
+        if let coveredImage = renderedCoverImage(image: image, translation: translation, ocrLines: ocrLines) {
             InteractiveImageView(
                 image: coveredImage,
                 scale: $imageScale,
@@ -625,6 +624,36 @@ struct ResultPanelView: View {
             )
             .frame(minWidth: 160)
         }
+    }
+
+    /// 渲染（或复用缓存的）译文覆盖图
+    private func renderedCoverImage(
+        image: NSImage,
+        translation: String,
+        ocrLines: [(text: String, rect: CGRect)]
+    ) -> NSImage? {
+        let key = Self.coverCacheKey(image: image, translation: translation, ocrLines: ocrLines)
+        if coverCache.key != key {
+            coverCache.key = key
+            coverCache.image = Self.renderPositionedCoverImage(
+                image: image,
+                translation: translation,
+                ocrLines: ocrLines
+            )
+        }
+        return coverCache.image
+    }
+
+    /// 缓存 key：原图身份 + 译文 + OCR 行位置，任一变化才重渲染
+    private static func coverCacheKey(
+        image: NSImage,
+        translation: String,
+        ocrLines: [(text: String, rect: CGRect)]
+    ) -> String {
+        let linesKey = ocrLines
+            .map { "\($0.text)|\($0.rect.minX),\($0.rect.minY),\($0.rect.width),\($0.rect.height)" }
+            .joined(separator: ";")
+        return "\(Unmanaged.passUnretained(image).toOpaque())|\(translation)|\(linesKey)"
     }
 
     /// 缩放控制按钮组
@@ -664,6 +693,12 @@ struct ResultPanelView: View {
         let isProminent: Bool
     }
 
+    /// 1:1 译文覆盖图的渲染缓存（与 @State 配合跨 body 求值复用，key 未变时不重跑渲染）
+    private final class CoverRenderCache {
+        var key = ""
+        var image: NSImage?
+    }
+
     private static func clusterOcrSections(_ sortedLines: [(text: String, rect: CGRect)]) -> [OcrVisualSection] {
         guard !sortedLines.isEmpty else { return [] }
         let overallAvgH = sortedLines.map(\.rect.height).reduce(0, +) / CGFloat(sortedLines.count)
@@ -698,45 +733,60 @@ struct ResultPanelView: View {
         }
     }
 
-    /// 从原图采样指定区域周边的背景颜色
-    private static func sampleBackgroundColor(from image: NSImage, pixelRect: CGRect) -> NSColor {
-        guard let tiff = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff),
-              let cgImage = rep.cgImage else {
-            return NSColor(calibratedWhite: 0.98, alpha: 1.0)
-        }
-        let w = cgImage.width
-        let h = cgImage.height
-        guard w > 0, h > 0 else { return NSColor.windowBackgroundColor }
+    /// 整图只解码一次的背景色采样器：覆盖渲染中所有行/段落共用，
+    /// 避免逐行调用 tiffRepresentation 造成的重复全图解码（几十行文本时主线程明显卡顿）
+    private struct PixelSampler {
+        private let cgImage: CGImage?
+        private let cfData: CFData?
+        private let bytePtr: UnsafePointer<UInt8>?
+        private static let fallbackColor = NSColor(calibratedWhite: 0.98, alpha: 1.0)
 
-        let cgY = max(0, min(h - 1, Int(CGFloat(h) - pixelRect.maxY)))
-        let cgX = max(0, min(w - 1, Int(pixelRect.origin.x)))
-
-        let samplePoints = [
-            (max(0, cgX - 3), max(0, cgY - 2)),
-            (min(w - 1, cgX + Int(pixelRect.width) + 2), max(0, cgY - 2)),
-            (max(0, cgX - 2), min(h - 1, cgY + 2)),
-        ]
-
-        guard let dataProvider = cgImage.dataProvider,
-              let data = dataProvider.data,
-              let ptr = CFDataGetBytePtr(data) else {
-            return NSColor(calibratedWhite: 0.98, alpha: 1.0)
-        }
-
-        let bytesPerPixel = max(4, cgImage.bitsPerPixel / 8)
-        let bytesPerRow = cgImage.bytesPerRow
-
-        for (sx, sy) in samplePoints {
-            let offset = sy * bytesPerRow + sx * bytesPerPixel
-            if offset + 3 < CFDataGetLength(data) {
-                let r = CGFloat(ptr[offset]) / 255.0
-                let g = CGFloat(ptr[offset + 1]) / 255.0
-                let b = CGFloat(ptr[offset + 2]) / 255.0
-                return NSColor(calibratedRed: r, green: g, blue: b, alpha: 1.0)
+        init(image: NSImage) {
+            guard let tiff = image.tiffRepresentation,
+                  let rep = NSBitmapImageRep(data: tiff),
+                  let cg = rep.cgImage,
+                  let data = cg.dataProvider?.data,
+                  let ptr = CFDataGetBytePtr(data) else {
+                self.cgImage = nil
+                self.cfData = nil
+                self.bytePtr = nil
+                return
             }
+            self.cgImage = cg
+            self.cfData = data
+            self.bytePtr = ptr
         }
-        return NSColor(calibratedWhite: 0.98, alpha: 1.0)
+
+        /// 从原图采样指定区域周边的背景颜色（pixelRect 为图像坐标系、原点左下）
+        func backgroundColor(pixelRect: CGRect) -> NSColor {
+            guard let cgImage, let cfData, let bytePtr else { return Self.fallbackColor }
+            let w = cgImage.width
+            let h = cgImage.height
+            guard w > 0, h > 0 else { return NSColor.windowBackgroundColor }
+
+            let cgY = max(0, min(h - 1, Int(CGFloat(h) - pixelRect.maxY)))
+            let cgX = max(0, min(w - 1, Int(pixelRect.origin.x)))
+
+            let samplePoints = [
+                (max(0, cgX - 3), max(0, cgY - 2)),
+                (min(w - 1, cgX + Int(pixelRect.width) + 2), max(0, cgY - 2)),
+                (max(0, cgX - 2), min(h - 1, cgY + 2)),
+            ]
+
+            let bytesPerPixel = max(4, cgImage.bitsPerPixel / 8)
+            let bytesPerRow = cgImage.bytesPerRow
+
+            for (sx, sy) in samplePoints {
+                let offset = sy * bytesPerRow + sx * bytesPerPixel
+                if offset + 3 < CFDataGetLength(cfData) {
+                    let r = CGFloat(bytePtr[offset]) / 255.0
+                    let g = CGFloat(bytePtr[offset + 1]) / 255.0
+                    let b = CGFloat(bytePtr[offset + 2]) / 255.0
+                    return NSColor(calibratedRed: r, green: g, blue: b, alpha: 1.0)
+                }
+            }
+            return Self.fallbackColor
+        }
     }
 
     /// 渲染译文覆盖图：按原图物理行高与字号对齐覆盖，支持标题与正文字号分级自适应，杜绝重叠与裁切
@@ -766,6 +816,8 @@ struct ResultPanelView: View {
         // Vision 归一化坐标从上到下排序
         let sortedOcrLines = ocrLines.sorted { $0.rect.midY > $1.rect.midY }
         let overallAvgH = sortedOcrLines.map(\.rect.height).reduce(0, +) / CGFloat(sortedOcrLines.count)
+        // 整图只解码一次，所有行/段落共用
+        let sampler = PixelSampler(image: image)
 
         if transLines.count == sortedOcrLines.count {
             // 场景 ①：行级 1 对 1 精准对齐（每行字号、粗细完全跟随原图对应行）
@@ -778,7 +830,7 @@ struct ResultPanelView: View {
                     ocrBox: ocrLine.rect,
                     imgW: imgW,
                     imgH: imgH,
-                    image: image,
+                    sampler: sampler,
                     isProminent: isProminent
                 )
             }
@@ -796,7 +848,7 @@ struct ResultPanelView: View {
                     section: section,
                     imgW: imgW,
                     imgH: imgH,
-                    image: image
+                    sampler: sampler
                 )
             }
         }
@@ -836,7 +888,7 @@ struct ResultPanelView: View {
         ocrBox: CGRect,
         imgW: CGFloat,
         imgH: CGFloat,
-        image: NSImage,
+        sampler: PixelSampler,
         isProminent: Bool
     ) {
         let pixelX = ocrBox.origin.x * imgW
@@ -845,7 +897,7 @@ struct ResultPanelView: View {
         let pixelH = ocrBox.size.height * imgH
         guard pixelW > 4, pixelH > 2 else { return }
 
-        let sampledBg = sampleBackgroundColor(from: image, pixelRect: CGRect(x: pixelX, y: pixelY, width: pixelW, height: pixelH))
+        let sampledBg = sampler.backgroundColor(pixelRect: CGRect(x: pixelX, y: pixelY, width: pixelW, height: pixelH))
         let brightness = (sampledBg.redComponent * 0.299 + sampledBg.greenComponent * 0.587 + sampledBg.blueComponent * 0.114)
         let textColor = brightness > 0.55 ? NSColor.black.withAlphaComponent(0.88) : NSColor.white
 
@@ -899,7 +951,7 @@ struct ResultPanelView: View {
         section: OcrVisualSection,
         imgW: CGFloat,
         imgH: CGFloat,
-        image: NSImage
+        sampler: PixelSampler
     ) {
         let pixelX = section.unionRect.origin.x * imgW
         let pixelY = section.unionRect.origin.y * imgH
@@ -907,7 +959,7 @@ struct ResultPanelView: View {
         let pixelH = section.unionRect.size.height * imgH
         guard pixelW > 4, pixelH > 2 else { return }
 
-        let sampledBg = sampleBackgroundColor(from: image, pixelRect: CGRect(x: pixelX, y: pixelY, width: pixelW, height: pixelH))
+        let sampledBg = sampler.backgroundColor(pixelRect: CGRect(x: pixelX, y: pixelY, width: pixelW, height: pixelH))
         let brightness = (sampledBg.redComponent * 0.299 + sampledBg.greenComponent * 0.587 + sampledBg.blueComponent * 0.114)
         let textColor = brightness > 0.55 ? NSColor.black.withAlphaComponent(0.88) : NSColor.white
 

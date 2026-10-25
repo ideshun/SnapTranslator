@@ -127,10 +127,11 @@ final class ResultModel: ObservableObject {
             tab = defaultDoneTab
         }
 
-        // 记录识别历史
+        // 记录识别历史（条目图片降采样存储：上限可选 280 条，
+        // 全尺寸 Retina 截图逐条强持有可达 GB 级内存）
         if addHistory, let image {
             let entry = HistoryEntry(
-                image: image,
+                image: Self.archivedImage(image),
                 sourceText: sourceText,
                 translatedText: translation,
                 timestamp: Date(),
@@ -140,6 +141,25 @@ final class ResultModel: ObservableObject {
             )
             history.insert(entry, at: 0)
         }
+    }
+
+    /// 历史条目存档图：最长边超过 1600px 时降采样。历史仅用于回看浏览，
+    /// 回看时 ocrLines 为空、1:1 覆盖渲染不适用，降采样不影响查看体验
+    private static func archivedImage(_ image: NSImage) -> NSImage {
+        let maxSide: CGFloat = 1600
+        let size = image.size
+        let longest = max(size.width, size.height)
+        guard longest > maxSide else { return image }
+        let scale = maxSide / longest
+        let newSize = NSSize(
+            width: (size.width * scale).rounded(.down),
+            height: (size.height * scale).rounded(.down)
+        )
+        let resized = NSImage(size: newSize)
+        resized.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: newSize))
+        resized.unlockFocus()
+        return resized
     }
 
     func failed(_ message: String) {

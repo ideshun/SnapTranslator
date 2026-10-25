@@ -59,8 +59,9 @@ final class ResultPanelController: NSObject, NSWindowDelegate {
         panel.titleVisibility = .hidden
         panel.backgroundColor = .windowBackgroundColor
         panel.isReleasedWhenClosed = false
-        // 首次创建时居中显示（使用小尺寸）
-        if let screen = NSScreen.main {
+        // 位置/尺寸记忆：按窗口名持久化到 UserDefaults；无历史记忆（首次启动）时才居中
+        let hasRestoredFrame = panel.setFrameAutosaveName("SnapTranslatorResultPanel")
+        if !hasRestoredFrame, let screen = NSScreen.main {
             let visible = screen.visibleFrame
             panel.setFrameOrigin(NSPoint(
                 x: visible.midX - initialSize.width / 2,
