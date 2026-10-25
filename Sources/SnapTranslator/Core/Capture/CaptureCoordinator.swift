@@ -10,6 +10,9 @@ final class CaptureCoordinator {
     var onPermissionDenied: (() -> Void)?
     /// 用户取消框选（Esc / 右键）时回调，供上层恢复被隐藏的翻译面板
     var onCancelled: (() -> Void)?
+    /// 直接截图（重截上次区域 / 无定格底图兜底）未产出结果时回调
+    /// （选区越界或过小、权限被拒等静默失败路径），供上层恢复被隐藏的面板
+    var onDirectCaptureFailed: (() -> Void)?
 
     private static let lastRectKey = "st.lastCaptureRect"
 
@@ -105,9 +108,15 @@ final class CaptureCoordinator {
     /// 直接截取全局坐标区域（重截上次区域时使用）
     func capture(rect: CGRect) {
         let screen = NSScreen.screens.first { $0.frame.intersects(rect) } ?? NSScreen.main
-        guard let screen else { return }
+        guard let screen else {
+            onDirectCaptureFailed?()
+            return
+        }
         let clamped = rect.intersection(screen.frame)
-        guard clamped.width > 4, clamped.height > 4 else { return }
+        guard clamped.width > 4, clamped.height > 4 else {
+            onDirectCaptureFailed?()
+            return
+        }
 
         // 全局 AppKit 坐标 → 屏幕内坐标（原点左上）
         let rectInDisplay = CGRect(
@@ -118,6 +127,7 @@ final class CaptureCoordinator {
         )
         guard let image = ScreenCapture.capture(displayID: screen.displayID, rect: rectInDisplay) else {
             onPermissionDenied?()
+            onDirectCaptureFailed?()
             return
         }
         Self.saveLastRect(clamped)

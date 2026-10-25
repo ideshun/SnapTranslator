@@ -6,7 +6,7 @@
 
 ## 功能
 
-- **截屏翻译**：`⌥S` 唤起框选（每屏遮罩、尺寸提示、ESC 取消），松开自动 OCR（Apple Vision，端上离线）并翻译；首次鼠标即可框选，无需二次点击
+- **截屏翻译**：`⌥S` 唤起框选（每屏遮罩、尺寸提示、ESC/右键取消），松开自动 OCR（Apple Vision，端上离线）并翻译；首次鼠标即可框选，无需二次点击
 - **重截上次区域**：`⌥⇧S` 直接按上次选区截图，适合字幕/日志等连续翻译
 - **原文/译文对照**：原图 / 译文 / 并排三种视图切换；并排模式左右皆为图片形式（左原图、右译文渲染图），直观对照
 - **语种切换**：支持中译英等 12 种语言双向互译；结果面板一键「交换源/目标语言」立即重译
@@ -32,11 +32,13 @@
 
 > **如何使用 GLM-5.2**：默认主引擎已是 GLM-5.2。只需在 **设置 → 引擎** 中填入智谱开放平台的 API Key 即可，无需改动 Base URL 和模型名（已固定）。智谱开放平台申请地址：https://open.bigmodel.cn/
 
-> **「仅离线」模式**：设置 → 引擎 → 主引擎选「仅离线（纯本地，永不联网）」，则只使用 Apple 系统翻译，**绝不联网降级**到 GLM/Google/OpenAI/DeepL，适合完全离线环境。需 macOS 15+ 并已下载 Apple 语言包，否则会提示当前系统不支持离线翻译。
+> **离线使用**：主引擎选「Apple 系统翻译（本地离线优先）」并下载语言包后，OCR 与翻译均在本地完成。注意：Apple 引擎失败（如语言包缺失、语向不支持）时会**自动降级到云引擎**，当前版本没有「绝不联网」的强制离线开关；需要绝对离线环境时请断网使用。Apple 引擎需 macOS 15+。
 
 ## 构建与安装
 
 要求：macOS 14+，Xcode Command Line Tools（`xcodebuild` 完整版 Xcode 亦可）。
+
+> ⚠️ **新版纯 CLT 无法编译**：macOS 27 SDK 起 SwiftUI 的 `@State` 等属性包装器以宏实现，宏插件（SwiftUIMacros）仅随完整版 Xcode 分发。若 `swift build` 报 `external macro implementation type 'SwiftUIMacros.StateMacro' could not be found`，请安装完整版 Xcode 并执行 `sudo xcode-select -s /Applications/Xcode.app`。
 
 ```bash
 ./make-app.sh
@@ -55,7 +57,7 @@ open /Applications/SnapTranslator.app
 # 构建（debug）
 swift build --disable-sandbox
 
-# 自测（31 项：快捷键/语种检测/Google 解析/生词本/CSV）
+# 自测（40 项：快捷键/语种码/语种检测/Google 解析/生词本/CSV）
 .build/debug/SnapTranslator --self-test
 
 # 打包 .app

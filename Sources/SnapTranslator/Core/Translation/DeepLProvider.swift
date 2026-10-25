@@ -19,6 +19,15 @@ struct DeepLProvider: TranslationProviding {
 
     var isAvailable: Bool { !apiKey.isEmpty }
 
+    /// form-urlencoded 编码集：仅字母数字与 RFC 3986 非保留字符。
+    /// 不能用 .urlQueryAllowed——它不转义 & = + 等子分隔符，
+    /// OCR 文本含这些字符（如 "AT&T"）时请求体会被截断成非法参数
+    private static let formAllowedCharacters: CharacterSet = {
+        var set = CharacterSet.alphanumerics
+        set.insert(charactersIn: "-._~")
+        return set
+    }()
+
     func translate(_ text: String, from source: Language?, to target: Language) async throws -> String {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -35,7 +44,7 @@ struct DeepLProvider: TranslationProviding {
         let body = bodyComponents
             .map { component -> String in
                 let value = component.value?
-                    .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+                    .addingPercentEncoding(withAllowedCharacters: Self.formAllowedCharacters) ?? ""
                 return "\(component.name)=\(value)"
             }
             .joined(separator: "&")

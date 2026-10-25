@@ -6,7 +6,7 @@
 
 <!-- ===== SEO ===== -->
 <title>SnapTranslator — 轻量级 macOS 截屏翻译工具</title>
-<meta name="description" content="SnapTranslator 是一款轻量、开源的 macOS 截屏翻译工具。按 ⌥S 框选屏幕，离线 OCR + 多引擎翻译，支持原文/译文对照、生词本、纯离线模式。1MB 体积，零第三方依赖。" />
+<meta name="description" content="SnapTranslator 是一款轻量、开源的 macOS 截屏翻译工具。按 ⌥S 框选屏幕，离线 OCR + 多引擎翻译，支持原文/译文对照、生词本与 Apple 离线翻译引擎。1MB 体积，零第三方依赖。" />
 <meta name="keywords" content="截屏翻译,macOS 翻译,屏幕翻译,OCR 翻译,离线翻译,SnapTranslator,开源翻译工具,菜单栏翻译" />
 <meta name="author" content="ideshun" />
 <meta name="robots" content="index,follow" />
@@ -40,7 +40,7 @@
   "applicationCategory": "UtilitiesApplication",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" },
   "description": "轻量级 macOS 截屏翻译工具：全局快捷键、离线 OCR、多引擎翻译、原文/译文对照、生词本。",
-  "softwareVersion": "1.0",
+  "softwareVersion": "0.2.0",
   "fileSize": "1MB",
   "author": { "@type": "Person", "name": "ideshun", "url": "https://github.com/ideshun" },
   "codeRepository": "https://github.com/ideshun/SnapTranslator",
@@ -526,7 +526,7 @@ section { padding: 78px 0; }
     <div class="hero-meta">
       <span><b>⌥S</b> <span data-i18n="hero.m1">唤起框选</span></span>
       <span><b data-i18n="hero.m2v">12 种</b> <span data-i18n="hero.m2">语言互译</span></span>
-      <span><b data-i18n="hero.m3v">纯离线</b> <span data-i18n="hero.m3">模式可用</span></span>
+      <span><b data-i18n="hero.m3v">本地</b> <span data-i18n="hero.m3">OCR 识别</span></span>
     </div>
   </div>
 
@@ -625,7 +625,7 @@ section { padding: 78px 0; }
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg></div>
         <h3 data-i18n="feat.f8t">隐私友好</h3>
-        <p data-i18n="feat.f8p">仅需屏幕录制权限。纯离线模式下识别与翻译均在本地完成，数据不出设备。</p>
+        <p data-i18n="feat.f8p">仅需屏幕录制权限。OCR 与 Apple 翻译引擎均在本地运行，选择 Apple 主引擎即可离线完成识别与翻译。</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg></div>
@@ -675,7 +675,7 @@ section { padding: 78px 0; }
       </div>
     </div>
     <div class="engine-note">
-      <b data-i18n="eng.noteT">纯离线模式：</b><span data-i18n="eng.noteP">在设置中将主引擎选为「仅离线」，应用将只使用 Apple 系统翻译，绝不联网。适合处理敏感内容或无网络环境。</span>
+      <b data-i18n="eng.noteT">离线优先：</b><span data-i18n="eng.noteP">主引擎选「Apple 系统翻译」，识别与翻译均在本地完成；该引擎失败时会自动降级到云引擎。当前版本无强制离线开关，需要绝对离线请断网使用。</span>
     </div>
   </div>
 </section>
@@ -686,7 +686,7 @@ section { padding: 78px 0; }
     <div class="section-head">
       <span class="section-eyebrow" data-i18n="ins.eyebrow">INSTALL</span>
       <h2 class="section-title" data-i18n="ins.title">从源码构建，一分钟完成</h2>
-      <p class="section-sub" data-i18n="ins.sub">需要 macOS 14+ 与 Xcode Command Line Tools。</p>
+      <p class="section-sub" data-i18n="ins.sub">需要 macOS 14+ 与 Xcode（注意：macOS 27 SDK 起纯 Command Line Tools 缺少 SwiftUI 宏插件，无法编译）。</p>
     </div>
     <div class="install-grid">
       <div class="install-steps">
@@ -742,7 +742,7 @@ section { padding: 78px 0; }
       </details>
       <details>
         <summary data-i18n="faq.q2">可以完全离线使用吗？</summary>
-        <p data-i18n="faq.a2">可以。在设置中开启「仅离线」模式后，应用只使用 Apple 系统翻译，识别与翻译均在本地完成，绝不联网。需要 macOS 15+ 并提前下载语言包。</p>
+        <p data-i18n="faq.a2">可以。主引擎选「Apple 系统翻译（本地离线优先）」并下载语言包后，识别与翻译均在本地完成。注意该引擎失败时会自动降级到云引擎；如需确保绝不联网，请断网使用。需要 macOS 15+。</p>
       </details>
       <details>
         <summary data-i18n="faq.q3">需要授予哪些系统权限？</summary>
@@ -754,7 +754,7 @@ section { padding: 78px 0; }
       </details>
       <details>
         <summary data-i18n="faq.q5">支持哪些语言？</summary>
-        <p data-i18n="faq.a5">支持中文、英语、日语、韩语、法语、德语、西班牙语、葡萄牙语、俄语、意大利语、繁体中文、越南语等 12 种语言双向互译，源语言自动检测。</p>
+        <p data-i18n="faq.a5">支持中文、英语、日语、韩语、法语、德语、西班牙语、葡萄牙语、俄语、意大利语、繁体中文、乌克兰语等 12 种语言双向互译，源语言自动检测。</p>
       </details>
     </div>
   </div>
@@ -822,7 +822,7 @@ section { padding: 78px 0; }
       "hero.title": "截屏即译<br/>你的 <span class=\"accent\">屏幕翻译</span> 助手",
       "hero.sub": "按下 ⌥S 框选屏幕任意区域，离线 OCR 识别文字并即时翻译。原文/译文对照查看，生词一键收藏。纯系统框架，零第三方依赖。",
       "hero.cta1": "免费下载", "hero.cta2": "GitHub 源码",
-      "hero.m1": "唤起框选", "hero.m2": "语言互译", "hero.m2v": "12 种", "hero.m3": "模式可用", "hero.m3v": "纯离线",
+      "hero.m1": "唤起框选", "hero.m2": "语言互译", "hero.m2v": "12 种", "hero.m3": "OCR 识别", "hero.m3v": "本地",
       "demo.title": "翻译结果", "demo.src": "原文", "demo.dst": "译文",
       "how.eyebrow": "WORKFLOW", "how.title": "四步完成一次翻译",
       "how.sub": "无需切换窗口，无需复制粘贴，翻译就在指尖。",
@@ -839,7 +839,7 @@ section { padding: 78px 0; }
       "feat.f5t": "结果面板置顶", "feat.f5p": "翻译面板常驻屏幕最上层，失焦自动降低透明度。支持拖动、缩放与位置记忆。",
       "feat.f6t": "生词本", "feat.f6p": "选中文字右键收藏到生词本，支持搜索、删除与 CSV 导出，随时随地复习。",
       "feat.f7t": "菜单栏驻留", "feat.f7p": "关闭窗口不退出应用，所有功能从菜单栏直达。支持开机自启，也可切换为纯菜单栏模式。",
-      "feat.f8t": "隐私友好", "feat.f8p": "仅需屏幕录制权限。纯离线模式下识别与翻译均在本地完成，数据不出设备。",
+      "feat.f8t": "隐私友好", "feat.f8p": "仅需屏幕录制权限。OCR 与 Apple 翻译引擎均在本地运行，选择 Apple 主引擎即可离线完成识别与翻译。",
       "feat.f9t": "轻量高效", "feat.f9p": "应用体积约 1MB，纯系统框架构建，零第三方依赖。启动迅速，运行安静。",
       "eng.eyebrow": "ENGINES", "eng.title": "多引擎自动降级，翻译不中断",
       "eng.sub": "默认智谱 GLM 主引擎，失败时自动切换备用引擎，15 秒超时兜底。",
@@ -849,9 +849,9 @@ section { padding: 78px 0; }
       "eng.e2t": "Apple 系统翻译", "eng.e2p": "完全离线，macOS 15+ 可用。下载语言包后所有识别与翻译均在本地完成，绝不上传数据。",
       "eng.e3t": "Google 翻译", "eng.e3p": "零配置开箱即用，作为后备引擎随时待命。",
       "eng.e4p": "在设置中填入 API Key 即可启用，适合对翻译质量要求更高的场景。",
-      "eng.noteT": "纯离线模式：", "eng.noteP": "在设置中将主引擎选为「仅离线」，应用将只使用 Apple 系统翻译，绝不联网。适合处理敏感内容或无网络环境。",
+      "eng.noteT": "离线优先：", "eng.noteP": "主引擎选「Apple 系统翻译」，识别与翻译均在本地完成；该引擎失败时会自动降级到云引擎。当前版本无强制离线开关，需要绝对离线请断网使用。",
       "ins.eyebrow": "INSTALL", "ins.title": "从源码构建，一分钟完成",
-      "ins.sub": "需要 macOS 14+ 与 Xcode Command Line Tools。",
+      "ins.sub": "需要 macOS 14+ 与 Xcode（注意：macOS 27 SDK 起纯 Command Line Tools 缺少 SwiftUI 宏插件，无法编译）。",
       "ins.s1t": "克隆仓库并构建", "ins.s1p": "运行 make-app.sh 脚本，自动编译并打包为 SnapTranslator.app。",
       "ins.s2t": "移动到应用程序", "ins.s2p": "将生成的 .app 复制到 /Applications 目录并打开。",
       "ins.s3t": "授权并开始使用", "ins.s3p": "首次截屏时授予「屏幕录制」权限，然后按 <kbd>⌥S</kbd> 即可开始翻译。",
@@ -862,13 +862,13 @@ section { padding: 78px 0; }
       "faq.q1": "和付费的屏幕翻译应用有什么区别？",
       "faq.a1": "SnapTranslator 专注截屏翻译这一件事，没有词典、广告、背单词等冗余功能。体积约 1MB，开源免费，代码透明可审计。",
       "faq.q2": "可以完全离线使用吗？",
-      "faq.a2": "可以。在设置中开启「仅离线」模式后，应用只使用 Apple 系统翻译，识别与翻译均在本地完成，绝不联网。需要 macOS 15+ 并提前下载语言包。",
+      "faq.a2": "可以。主引擎选「Apple 系统翻译（本地离线优先）」并下载语言包后，识别与翻译均在本地完成。注意该引擎失败时会自动降级到云引擎；如需确保绝不联网，请断网使用。需要 macOS 15+。",
       "faq.q3": "需要授予哪些系统权限？",
       "faq.a3": "仅需「屏幕录制」权限（截屏必需）。无需辅助功能权限，无需网络权限。API Key 安全存储在系统 Keychain 中。",
       "faq.q4": "翻译引擎挂了怎么办？",
       "faq.a4": "应用内置多引擎自动降级机制。主引擎失败或超时（15 秒）会自动切换到下一个引擎，无需手动干预，保证翻译不中断。",
       "faq.q5": "支持哪些语言？",
-      "faq.a5": "支持中文、英语、日语、韩语、法语、德语、西班牙语、葡萄牙语、俄语、意大利语、繁体中文、越南语等 12 种语言双向互译，源语言自动检测。",
+      "faq.a5": "支持中文、英语、日语、韩语、法语、德语、西班牙语、葡萄牙语、俄语、意大利语、繁体中文、乌克兰语等 12 种语言双向互译，源语言自动检测。",
       "footer.desc": "轻量级 macOS 截屏翻译工具。开源免费，离线可用，零第三方依赖。",
       "footer.product": "产品", "footer.resources": "资源", "footer.tech": "技术栈",
       "footer.issues": "问题反馈", "footer.releases": "发布记录",
@@ -882,7 +882,7 @@ section { padding: 78px 0; }
       "hero.title": "Screenshot.<br/>Translated. <span class=\"accent\">Instantly.</span>",
       "hero.sub": "Press ⌥S, drag over any area on your screen, and get an instant translation. Offline OCR, side-by-side view, and a built-in wordbook. Pure system frameworks, zero third-party dependencies.",
       "hero.cta1": "Free Download", "hero.cta2": "View on GitHub",
-      "hero.m1": "to capture", "hero.m2": "languages", "hero.m2v": "12", "hero.m3": "mode available", "hero.m3v": "Offline",
+      "hero.m1": "to capture", "hero.m2": "languages", "hero.m2v": "12", "hero.m3": "OCR", "hero.m3v": "On-device",
       "demo.title": "Translation", "demo.src": "Source", "demo.dst": "Translated",
       "how.eyebrow": "WORKFLOW", "how.title": "Translate in four steps",
       "how.sub": "No window switching, no copy-pasting. Translation at your fingertips.",
@@ -899,7 +899,7 @@ section { padding: 78px 0; }
       "feat.f5t": "Always-on-top Panel", "feat.f5p": "The result panel floats above other windows and fades when unfocused. Drag, resize, and position memory included.",
       "feat.f6t": "Wordbook", "feat.f6p": "Right-click any selected text to save it to your wordbook. Search, delete, and export to CSV anytime.",
       "feat.f7t": "Menu Bar App", "feat.f7p": "Closing the window never quits the app. Access everything from the menu bar, with optional launch at login.",
-      "feat.f8t": "Privacy Friendly", "feat.f8p": "Only screen recording permission is required. In offline mode, OCR and translation run entirely on your device.",
+      "feat.f8t": "Privacy Friendly", "feat.f8p": "Only screen recording permission is required. OCR and the Apple translation engine run entirely on your device — pick Apple Translation as the primary engine to stay local.",
       "feat.f9t": "Lightweight", "feat.f9p": "About 1MB in size, built purely on system frameworks with zero third-party dependencies. Fast and quiet.",
       "eng.eyebrow": "ENGINES", "eng.title": "Automatic failover across engines",
       "eng.sub": "GLM by default, with automatic fallback and a 15-second timeout per engine.",
@@ -909,9 +909,9 @@ section { padding: 78px 0; }
       "eng.e2t": "Apple Translation", "eng.e2p": "Fully offline on macOS 15+. Once language packs are downloaded, everything runs on-device and nothing is uploaded.",
       "eng.e3t": "Google Translate", "eng.e3p": "Zero configuration, always ready as a fallback engine.",
       "eng.e4p": "Paste your API Key in Settings to enable higher-quality translations when you need them.",
-      "eng.noteT": "Offline-only mode: ", "eng.noteP": "Set the primary engine to \"Offline Only\" and the app will use Apple Translation exclusively — never touching the network. Ideal for sensitive content or air-gapped environments.",
+      "eng.noteT": "Offline first: ", "eng.noteP": "Set the primary engine to Apple Translation and both OCR and translation run on-device. Note that a failing Apple engine falls back to cloud engines — there is no strict offline switch; disconnect the network if you must never go online.",
       "ins.eyebrow": "INSTALL", "ins.title": "Build from source in a minute",
-      "ins.sub": "Requires macOS 14+ and Xcode Command Line Tools.",
+      "ins.sub": "Requires macOS 14+ and Xcode (note: since the macOS 27 SDK, Command Line Tools alone lack the SwiftUI macro plugin and cannot build this project).",
       "ins.s1t": "Clone and build", "ins.s1p": "Run make-app.sh to compile and package SnapTranslator.app automatically.",
       "ins.s2t": "Move to Applications", "ins.s2p": "Copy the generated .app into /Applications and open it.",
       "ins.s3t": "Grant permission & go", "ins.s3p": "Grant Screen Recording on first capture, then press <kbd>⌥S</kbd> to start translating.",
@@ -922,13 +922,13 @@ section { padding: 78px 0; }
       "faq.q1": "How is it different from paid screen translators?",
       "faq.a1": "SnapTranslator focuses on one thing: screenshot translation. No dictionaries, ads, or flashcards. About 1MB, open source, and fully auditable.",
       "faq.q2": "Can it work completely offline?",
-      "faq.a2": "Yes. Enable \"Offline Only\" mode and the app uses Apple Translation exclusively — OCR and translation both run locally. Requires macOS 15+ with language packs downloaded.",
+      "faq.a2": "Yes. Set the primary engine to Apple Translation (offline first) and download the language packs — both OCR and translation then run locally. Note that a failing Apple engine falls back to cloud engines; disconnect the network if you must never go online. Requires macOS 15+.",
       "faq.q3": "What permissions does it need?",
       "faq.a3": "Only Screen Recording (required for capturing). No accessibility access, no network permission. API Keys are stored securely in the system Keychain.",
       "faq.q4": "What if a translation engine fails?",
       "faq.a4": "Built-in failover automatically switches to the next engine when one fails or times out (15s). No manual intervention needed.",
       "faq.q5": "Which languages are supported?",
-      "faq.a5": "12 languages including Chinese, English, Japanese, Korean, French, German, Spanish, Portuguese, Russian, Italian, Traditional Chinese and Vietnamese, with automatic source language detection.",
+      "faq.a5": "12 languages including Chinese, English, Japanese, Korean, French, German, Spanish, Portuguese, Russian, Italian, Traditional Chinese and Ukrainian, with automatic source language detection.",
       "footer.desc": "A lightweight screenshot translator for macOS. Open source, offline-capable, zero third-party dependencies.",
       "footer.product": "Product", "footer.resources": "Resources", "footer.tech": "Built With",
       "footer.issues": "Issues", "footer.releases": "Releases",
