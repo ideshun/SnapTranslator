@@ -57,9 +57,9 @@ struct OverlayView: View {
                     .position(x: selection.midX, y: max(selection.minY - 14, 10))
             } else {
                 VStack(spacing: 6) {
-                    Text("拖动框选要翻译的区域")
+                    Text("拖动框选区域，或点击窗口自动选中")
                         .font(.system(size: 16, weight: .medium))
-                    Text("松开即开始识别 · 按 ESC 取消")
+                    Text("松开即开始识别 · ESC / 右键取消")
                         .font(.system(size: 12))
                 }
                 .foregroundStyle(.white.opacity(0.9))
