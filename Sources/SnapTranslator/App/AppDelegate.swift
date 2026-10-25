@@ -1217,8 +1217,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let text = Self.pdfText(of: panelController.diagContentView)
             let hit = !needle.isEmpty && text.contains(needle)
             print("TAB \(name) pdfChars=\(text.count) contains(\(needle))=\(hit)")
-            if !hit { failures += 1 }
-            Self.dumpFullTree(of: panelController.diagContentView, depth: 0)
+            if !hit {
+                failures += 1
+                // 仅失败时打印视图树辅助定位（如文本视图零宽之类的问题）
+                Self.dumpFullTree(of: panelController.diagContentView, depth: 0)
+            }
         }
         // 对比页签无文本要求，仅验证可渲染出非空内容
         model.tab = .oneToOne
