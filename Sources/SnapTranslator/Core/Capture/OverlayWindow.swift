@@ -51,6 +51,11 @@ final class OverlayWindow: NSWindow {
     override var canBecomeMain: Bool { true }
 
     override func sendEvent(_ event: NSEvent) {
+        // 右键取消框选（与 ESC 等价，截图工具的常规交互）
+        if event.type == .rightMouseDown {
+            onCancelled?()
+            return
+        }
         if event.type == .leftMouseDown && !isKeyWindow {
             makeKey()
         }

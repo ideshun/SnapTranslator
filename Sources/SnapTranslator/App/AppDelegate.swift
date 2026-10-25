@@ -25,6 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var liveTranslateDebounce: Task<Void, Never>?
     /// 普通翻译请求序号，用于丢弃过期请求结果
     private var translateGeneration: UInt = 0
+    /// OCR 请求序号，用于丢弃过期 OCR 结果
+    /// （快速连续截屏/重试时，旧 OCR 若后完成会用旧文本覆盖新截图的面板状态）
+    private var ocrGeneration: UInt = 0
     /// 当前正在进行的翻译请求数（用于协调 translationHost 的隐藏时机）
     private var activeTranslationCount = 0
 
@@ -62,6 +65,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         captureCoordinator.onCancelled = { [weak self] in
             // 取消框选时恢复截屏前隐藏的面板
+            guard let self, self.didHidePanelForCapture else { return }
+            self.didHidePanelForCapture = false
+            self.panelController.show(near: nil)
+        }
+        captureCoordinator.onDirectCaptureFailed = { [weak self] in
+            // 直接截图未产出结果（选区越界/过小或权限被拒）：
+            // 同样恢复截屏前隐藏的面板，避免面板卡在隐藏状态只能靠 ⌥T 找回
             guard let self, self.didHidePanelForCapture else { return }
             self.didHidePanelForCapture = false
             self.panelController.show(near: nil)
@@ -764,9 +774,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             startCapture()
             return
         }
-        // 立即重截（无框选、无取消路径），同样先隐藏面板避免入镜
+        // 立即重截（无框选、无取消路径），同样先隐藏面板避免入镜；
+        // 失败路径（选区无效/权限被拒）由 onDirectCaptureFailed 恢复面板
         if settings.hideWindowOnCapture, panelController.isVisible {
             panelController.hide()
+            didHidePanelForCapture = true
         }
         captureCoordinator.capture(rect: rect)
     }
@@ -898,6 +910,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 对指定截图重跑 OCR 并翻译（截屏与「重新识别/翻译」重试共用）
     private func recognizeAndTranslate(image: NSImage, preserveTab: Bool, addHistory: Bool) {
         let model = panelController.model
+        ocrGeneration &+= 1
+        let generation = ocrGeneration
         model.phase = .recognizing
         // 全新截屏（非重试）时：若设置中未锁定源语言（自动检测），重置上一次面板内的临时锁定，使新截图自动检测
         if addHistory && settings.sourceHint == nil {
@@ -909,6 +923,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // 始终包含全语种识别，避免 sourceHint 限制 OCR 导致中文等语言无法识别
                 let languages = Self.allRecognitionLanguages(hint: self.settings.sourceHint)
                 let result = try await self.ocrService.recognize(image, languages: languages)
+                // 新的截屏/重试已经开始：丢弃过期 OCR 结果，避免旧文本覆盖新截图状态
+                guard generation == self.ocrGeneration else { return }
                 guard !result.fullText.isEmpty else {
                     model.failed("未识别到文字，请调整区域后重试")
                     return
@@ -924,6 +940,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     addHistory: addHistory
                 )
             } catch {
+                guard generation == self.ocrGeneration else { return }
                 model.failed("OCR 失败：\(error.localizedDescription)")
             }
         }
