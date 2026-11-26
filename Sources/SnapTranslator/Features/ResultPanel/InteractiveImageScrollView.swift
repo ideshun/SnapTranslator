@@ -196,15 +196,21 @@ final class InteractiveImageScrollView: NSScrollView {
         let displayW = baseSize.width * baseScale * imageScale
         let displayH = baseSize.height * baseScale * imageScale
 
-        // 更新滚动容器大小
-        let containerW = max(displayW + 16, clipSize.width)
-        let containerH = max(displayH + 16, clipSize.height)
+        // 更新滚动容器大小（图片居中对称展示，最小边距 12pt）
+        let containerW = max(displayW + 24, clipSize.width)
+        let containerH = max(displayH + 24, clipSize.height)
         containerView.frame = NSRect(x: 0, y: 0, width: containerW, height: containerH)
         containerView.setFrameSize(containerView.frame.size)
 
-        // 图片在左上角对齐（带 8pt 边距）
-        imageView.frame = NSRect(x: 8, y: 8, width: displayW, height: displayH)
+        let offsetX = max(12, ((containerW - displayW) / 2).rounded())
+        let offsetY = max(12, ((containerH - displayH) / 2).rounded())
+        imageView.frame = NSRect(x: offsetX, y: offsetY, width: displayW, height: displayH)
         imageView.imageScaling = .scaleAxesIndependently
+        imageView.wantsLayer = true
+        imageView.layer?.cornerRadius = 6
+        imageView.layer?.masksToBounds = true
+        imageView.layer?.borderWidth = 0.5
+        imageView.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.45).cgColor
     }
 
     // MARK: - 缩放控制

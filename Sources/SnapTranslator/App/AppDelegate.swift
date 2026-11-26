@@ -1,752 +1,59 @@
 import AppKit
 import Combine
 import PDFKit
+import SnapTranslatorCore
 import SwiftUI
+import UniformTypeIdentifiers
 
-/// 应用中枢：菜单栏、快捷键、流程编排（截屏 → OCR → 翻译 → 面板）
+/// 轻量应用中枢：装配各领域模块、细粒度响应设置变更、提供系统右键 Services 入口与窗口协调
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var statusItem: NSStatusItem?
     private let settings = SettingsStore()
-    private var wordBook: WordBookStore?
+    private lazy var wordBook = WordBookStore()
+    private lazy var historyStore = HistoryStore()
     private let hotkeyManager = HotkeyManager()
     private let captureCoordinator = CaptureCoordinator()
-    private let ocrService = VisionOCRService()
-    private lazy var panelController = ResultPanelController(settings: settings)
-    private lazy var translationHost = TranslationHostWindowController()
-    private var wordBookWindow: NSWindow?
-    private var settingsWindow: NSWindow?
-    private var settingsSubscription: AnyCancellable?
+    private let translationHost = TranslationHostWindowController()
+    private let pinController = PinImageWindowController()
 
-    /// 重试所需的最近一次请求（含 OCR 行位置，用于翻译覆盖定位）
-    private var lastRequest: (image: NSImage, sourceText: String, ocrLines: [(text: String, rect: CGRect)])?
-    /// 实时翻译请求序号，用于丢弃过期请求结果
-    private var liveTranslateGeneration: UInt = 0
-    /// 实时翻译防抖任务（编辑停顿后触发，避免每敲一个字都请求）
-    private var liveTranslateDebounce: Task<Void, Never>?
-    /// 普通翻译请求序号，用于丢弃过期请求结果
-    private var translateGeneration: UInt = 0
-    /// 面板内手动选择的源语言（语言菜单 / 交换按钮）：
-    /// 仅作用于当前内容，新截屏自动解除并恢复自动检测——
-    /// 否则「上次手选英→中」会让之后所有中文截图都按英文源翻译。
-    /// 持久锁定请用 设置 → 通用 → 源语言（settings.manualSourceLanguage）
-    private var panelManualSource: Language?
-    /// OCR 请求序号，用于丢弃过期 OCR 结果
-    /// （快速连续截屏/重试时，旧 OCR 若后完成会用旧文本覆盖新截图的面板状态）
-    private var ocrGeneration: UInt = 0
-    /// 当前正在进行的翻译请求数（用于协调 translationHost 的隐藏时机）
-    private var activeTranslationCount = 0
+    private lazy var panelController = ResultPanelController(settings: settings, historyStore: historyStore)
+    private lazy var pipeline = TranslationPipeline(
+        settings: settings,
+        historyStore: historyStore,
+        translationHost: translationHost,
+        model: panelController.model
+    )
+    private var menuBarController: MenuBarController?
+
+    private var wordBookWindow: NSWindow?
+    private var historyWindow: NSWindow?
+    private var settingsWindow: NSWindow?
+    private var subscriptions: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        setupToolTipDelay()
-        wordBook = WordBookStore()
-
-        // 菜单栏图标必须在任何窗口创建前设置，确保可靠显示
-        setupStatusItem()
-
-        // 按设置恢复程序坞显隐
-        applyDockPolicy()
-
-        // 设置主菜单（程序坞图标模式下左上角显示应用名和菜单）
-        setupMainMenu()
-
-        wirePanelActions()
-        applySettings()
-
-        // 每次启动都展示结果面板（默认聚焦「翻译」页签），支持输入内容实时翻译
-        UserDefaults.standard.set(true, forKey: "st.hasLaunched")
-        panelController.show(near: nil)
-
-        settingsSubscription = settings.objectWillChange
-            .debounce(for: .milliseconds(200), scheduler: RunLoop.main)
-            .sink { [weak self] _ in
-                self?.applySettings()
-            }
-
-        captureCoordinator.onCaptured = { [weak self] image, rect in
-            self?.handleCaptured(image: image, rect: rect)
-        }
-        captureCoordinator.onPermissionDenied = { [weak self] in
-            self?.notifyPermissionDenied()
-        }
-        captureCoordinator.onCancelled = { [weak self] in
-            // 取消框选时恢复截屏前隐藏的面板
-            guard let self, self.didHidePanelForCapture else { return }
-            self.didHidePanelForCapture = false
-            self.panelController.show(near: nil)
-        }
-        captureCoordinator.onDirectCaptureFailed = { [weak self] in
-            // 直接截图未产出结果（选区越界/过小或权限被拒）：
-            // 同样恢复截屏前隐藏的面板，避免面板卡在隐藏状态只能靠 ⌥T 找回
-            guard let self, self.didHidePanelForCapture else { return }
-            self.didHidePanelForCapture = false
-            self.panelController.show(near: nil)
-        }
-
-        // 激活应用，确保菜单栏图标和菜单立即可见
-        NSApp.activate(ignoringOtherApps: true)
-
-        // 预创建并显示翻译锚点窗口，确保 TranslationSession 随时可用
-        translationHost.show()
-    }
-
-    // MARK: - 程序坞策略
-
-    /// 缩短全局 Tooltip 弹出延迟（从默认 2 秒减少到 150 毫秒，交互灵敏即时）
-    private func setupToolTipDelay() {
+        // 仅用公开 UserDefaults 缩短 Tooltip 弹出延迟，绝不调用不安全的私有反射 API
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 150])
         UserDefaults.standard.set(150, forKey: "NSInitialToolTipDelay")
-        if let managerClass = NSClassFromString("NSToolTipManager") as? NSObject.Type {
-            let sel = Selector(("sharedToolTipManager"))
-            if managerClass.responds(to: sel),
-               let manager = managerClass.perform(sel)?.takeUnretainedValue() as? NSObject {
-                let setSel = Selector(("setInitialToolTipDelay:"))
-                if manager.responds(to: setSel) {
-                    _ = manager.perform(setSel, with: 0.15)
-                }
-            }
-        }
-    }
 
-    /// 根据设置切换程序坞显隐（LSUIElement 模式下需运行时切换激活策略）
-    private func applyDockPolicy() {
+        setupMenuBar()
         NSApp.setActivationPolicy(settings.showInDock ? .regular : .accessory)
-    }
+        NSApp.servicesProvider = self
 
-    // MARK: - 主菜单（左上角应用菜单）
+        wirePanelActions()
+        wireCaptureCoordinator()
+        observeSettingsFineGrained()
+        registerAllHotkeys()
 
-    /// 设置主菜单：应用名 + 文件/编辑/窗口菜单
-    private func setupMainMenu() {
-        let mainMenu = NSMenu()
-
-        // 应用菜单（点击左上角应用名显示）
-        let appMenuItem = NSMenuItem()
-        mainMenu.addItem(appMenuItem)
-        let appMenu = NSMenu()
-        appMenuItem.submenu = appMenu
-
-        let aboutItem = NSMenuItem(
-            title: "关于 SnapTranslator",
-            action: #selector(showAbout),
-            keyEquivalent: ""
-        )
-        aboutItem.target = self
-        appMenu.addItem(aboutItem)
-
-        appMenu.addItem(.separator())
-
-        let settingsItem = NSMenuItem(
-            title: "设置…",
-            action: #selector(openSettings),
-            keyEquivalent: ","
-        )
-        settingsItem.target = self
-        appMenu.addItem(settingsItem)
-
-        appMenu.addItem(.separator())
-
-        let quitItem = NSMenuItem(
-            title: "退出 SnapTranslator",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        )
-        appMenu.addItem(quitItem)
-
-        // 文件菜单
-        let fileMenuItem = NSMenuItem()
-        mainMenu.addItem(fileMenuItem)
-        let fileMenu = NSMenu(title: "文件")
-        fileMenuItem.submenu = fileMenu
-
-        let captureItem = NSMenuItem(
-            title: "截屏翻译",
-            action: #selector(startCapture),
-            keyEquivalent: "s"
-        )
-        captureItem.keyEquivalentModifierMask = [.option]
-        captureItem.target = self
-        fileMenu.addItem(captureItem)
-
-        let recaptureItem = NSMenuItem(
-            title: "重截上次区域",
-            action: #selector(recaptureLastRegion),
-            keyEquivalent: "s"
-        )
-        recaptureItem.keyEquivalentModifierMask = [.option, .shift]
-        recaptureItem.target = self
-        fileMenu.addItem(recaptureItem)
-
-        let toggleItem = NSMenuItem(
-            title: "显示/隐藏窗口",
-            action: #selector(togglePanel),
-            keyEquivalent: "t"
-        )
-        toggleItem.keyEquivalentModifierMask = [.option]
-        toggleItem.target = self
-        fileMenu.addItem(toggleItem)
-
-        fileMenu.addItem(.separator())
-
-        let wordBookItem = NSMenuItem(
-            title: "生词本",
-            action: #selector(openWordBook),
-            keyEquivalent: ""
-        )
-        wordBookItem.target = self
-        fileMenu.addItem(wordBookItem)
-
-        let historyItem = NSMenuItem(
-            title: "识别历史",
-            action: #selector(showHistory),
-            keyEquivalent: "h"
-        )
-        historyItem.target = self
-        fileMenu.addItem(historyItem)
-
-        // 编辑菜单：提供标准的撤销/剪切/复制/粘贴/全选，
-        // 缺少该菜单时 ⌘X/⌘C/⌘V/⌘A 等快捷键在任何文本框内都不可用
-        let editMenuItem = NSMenuItem()
-        mainMenu.addItem(editMenuItem)
-        let editMenu = NSMenu(title: "编辑")
-        editMenuItem.submenu = editMenu
-
-        let editItems: [(String, Selector, String)] = [
-            ("撤销", Selector(("undo:")), "z"),
-            ("重做", Selector(("redo:")), "Z"),
-            ("剪切", #selector(NSText.cut(_:)), "x"),
-            ("复制", #selector(NSText.copy(_:)), "c"),
-            ("粘贴", #selector(NSText.paste(_:)), "v"),
-            ("全选", #selector(NSText.selectAll(_:)), "a"),
-        ]
-        for (index, (title, action, key)) in editItems.enumerated() {
-            if index == 2 {
-                editMenu.addItem(.separator())
-            }
-            editMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: key))
-        }
-
-        // 窗口菜单
-        let windowMenuItem = NSMenuItem()
-        mainMenu.addItem(windowMenuItem)
-        let windowMenu = NSMenu(title: "窗口")
-        windowMenuItem.submenu = windowMenu
-
-        let minimizeItem = NSMenuItem(
-            title: "最小化",
-            action: #selector(NSWindow.miniaturize(_:)),
-            keyEquivalent: "m"
-        )
-        windowMenu.addItem(minimizeItem)
-
-        let zoomItem = NSMenuItem(
-            title: "缩放",
-            action: #selector(NSWindow.zoom(_:)),
-            keyEquivalent: ""
-        )
-        windowMenu.addItem(zoomItem)
-
-        NSApp.mainMenu = mainMenu
-    }
-
-    @objc private func showAbout() {
-        NSApp.orderFrontStandardAboutPanel(nil)
-    }
-
-    // MARK: - 菜单栏
-
-    private func setupStatusItem() {
-        // 使用可变长度确保图标在所有场景下都能显示
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = item.button {
-            // 依次尝试多个 SF Symbol，最后用程序化绘制兜底
-            let symbols = [
-                "character.bubble.fill",
-                "character.bubble",
-                "translate",
-                "text.bubble",
-                "globe",
-                "doc.text.magnifyingglass",
-            ]
-            var image: NSImage?
-            for symbol in symbols {
-                if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: "SnapTranslator") {
-                    image = img
-                    break
-                }
-            }
-            if image == nil {
-                // 程序化绘制一个简单的翻译气泡图标
-                image = Self.makeFallbackIcon()
-            }
-            image?.isTemplate = true
-            // 设置合适的尺寸确保图标在菜单栏中清晰可见
-            image?.size = NSSize(width: 18, height: 18)
-            button.image = image
-            button.imagePosition = .imageOnly
-            button.toolTip = "SnapTranslator"
-            // 确保按钮能正确接收点击
-            button.isEnabled = true
-        }
-        statusItem = item
-        item.menu = buildMenu()
-    }
-
-    /// 程序化绘制菜单栏图标（SF Symbol 全部加载失败时的兜底）
-    private static func makeFallbackIcon() -> NSImage {
-        let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        // 画一个圆角气泡 + 两条文字线（template 模式由系统自动适配颜色）
-        NSColor.labelColor.set()
-        let bubble = NSBezierPath(roundedRect: NSRect(x: 2, y: 2, width: 14, height: 12), xRadius: 3, yRadius: 3)
-        bubble.fill()
-        // 气泡尾巴
-        let tail = NSBezierPath()
-        tail.move(to: NSPoint(x: 6, y: 14))
-        tail.line(to: NSPoint(x: 4, y: 17))
-        tail.line(to: NSPoint(x: 10, y: 14))
-        tail.close()
-        tail.fill()
-        image.unlockFocus()
-        image.isTemplate = true
-        return image
-    }
-
-    private func buildMenu() -> NSMenu {
-        let menu = NSMenu()
-
-        // 应用名标题
-        let titleItem = NSMenuItem(title: "SnapTranslator", action: nil, keyEquivalent: "")
-        titleItem.isEnabled = false
-        menu.addItem(titleItem)
-
-        menu.addItem(.separator())
-
-        let captureItem = NSMenuItem(
-            title: "截屏翻译（\(settings.hotkeyCapture.display)）",
-            action: #selector(startCapture),
-            keyEquivalent: ""
-        )
-        captureItem.target = self
-        menu.addItem(captureItem)
-
-        let recaptureItem = NSMenuItem(
-            title: "重截上次区域（\(settings.hotkeyRecapture.display)）",
-            action: #selector(recaptureLastRegion),
-            keyEquivalent: ""
-        )
-        recaptureItem.target = self
-        menu.addItem(recaptureItem)
-
-        let toggleItem = NSMenuItem(
-            title: "显示/隐藏窗口（\(settings.hotkeyTogglePanel.display)）",
-            action: #selector(togglePanel),
-            keyEquivalent: ""
-        )
-        toggleItem.target = self
-        menu.addItem(toggleItem)
-
-        menu.addItem(.separator())
-
-        let dockItem = NSMenuItem(
-            title: "在程序坞中显示",
-            action: #selector(toggleDock),
-            keyEquivalent: ""
-        )
-        dockItem.target = self
-        dockItem.state = settings.showInDock ? .on : .off
-        menu.addItem(dockItem)
-
-        menu.addItem(.separator())
-
-        let historyItem = NSMenuItem(
-            title: "识别历史",
-            action: #selector(showHistory),
-            keyEquivalent: ""
-        )
-        historyItem.target = self
-        menu.addItem(historyItem)
-
-        let wordBookItem = NSMenuItem(
-            title: "生词本",
-            action: #selector(openWordBook),
-            keyEquivalent: ""
-        )
-        wordBookItem.target = self
-        menu.addItem(wordBookItem)
-
-        let settingsItem = NSMenuItem(
-            title: "设置…",
-            action: #selector(openSettings),
-            keyEquivalent: ","
-        )
-        settingsItem.target = self
-        menu.addItem(settingsItem)
-
-        menu.addItem(.separator())
-
-        let quitItem = NSMenuItem(
-            title: "退出 SnapTranslator",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        )
-        menu.addItem(quitItem)
-
-        return menu
-    }
-
-    // MARK: - 设置应用
-
-    /// 快捷键 / 置顶 / 菜单文案 全量刷新
-    private func applySettings() {
-        hotkeyManager.unregisterAll()
-
-        var allRegistered = true
-        allRegistered = hotkeyManager.register(.capture, spec: settings.hotkeyCapture) { [weak self] in
-            Task { @MainActor in self?.startCapture() }
-        } && allRegistered
-        allRegistered = hotkeyManager.register(.recapture, spec: settings.hotkeyRecapture) { [weak self] in
-            Task { @MainActor in self?.recaptureLastRegion() }
-        } && allRegistered
-        allRegistered = hotkeyManager.register(.togglePanel, spec: settings.hotkeyTogglePanel) { [weak self] in
-            Task { @MainActor in self?.togglePanel() }
-        } && allRegistered
-
-        if !allRegistered {
-            presentErrorAlert("部分快捷键注册失败", error: nil)
-        }
-
-        panelController.applyPin(alwaysOnTop: settings.alwaysOnTop)
-        // 设置变化时同步应用默认窗口大小
-        panelController.applyDefaultWindowSize()
-        // 置顶状态变化时同步功能弹窗（生词本/设置）层级，保证弹窗在置顶面板之上
-        applyPopupWindowLevels()
-        statusItem?.menu = buildMenu()
-
-        // 按历史设置限制历史条数
-        trimHistory()
-    }
-
-    /// 功能弹窗层级跟随置顶状态：面板置顶时弹窗取 .modalPanel，
-    /// 否则普通层级（与 showWindow 创建时的规则保持一致）
-    private func applyPopupWindowLevels() {
-        let level: NSWindow.Level = settings.alwaysOnTop ? .modalPanel : .normal
-        for window in [wordBookWindow, settingsWindow].compactMap({ $0 }) {
-            window.level = level
-        }
-    }
-
-    /// 根据设置修剪历史记录
-    private func trimHistory() {
-        let limit = settings.historyLimit
-        if limit > 0 && panelController.model.history.count > limit {
-            panelController.model.history = Array(panelController.model.history.prefix(limit))
-        }
-    }
-
-    private func wirePanelActions() {
-        panelController.onCollect = { [weak self] phrase, context in
-            self?.collectWord(phrase, context: context)
-        }
-        panelController.onRetry = { [weak self] in
-            self?.retryTranslation()
-        }
-        panelController.onSwapLanguages = { [weak self] in
-            self?.swapLanguages()
-        }
-        panelController.onOpenWordBook = { [weak self] in
-            self?.openWordBook()
-        }
-        panelController.onLiveTranslate = { [weak self] text in
-            self?.liveTranslate(text: text)
-        }
-        panelController.onSourceLanguageChange = { [weak self] lang in
-            self?.handleSourceLanguageChange(lang)
-        }
-        panelController.onTargetLanguageChange = { [weak self] lang in
-            self?.handleTargetLanguageChange(lang)
-        }
-    }
-
-    // MARK: - 语言切换
-
-    /// 用户从状态栏选择源语言后：记录面板级临时锁定并重新翻译当前文本。
-    /// 选择 nil（自动检测）= 解除锁定，恢复自动检测。
-    /// 该锁定只影响当前内容，下一次截屏会自动解除（自动检测接管）
-    private func handleSourceLanguageChange(_ lang: Language?) {
-        panelManualSource = lang
-        // 同步 hint，保持 OCR 语言集等其他读取方一致
-        settings.sourceHint = lang
-        // 如有当前文本，重新翻译
-        reTranslateCurrent()
-    }
-
-    /// 用户从状态栏选择目标语言后：更新设置并重新翻译当前文本
-    private func handleTargetLanguageChange(_ lang: Language) {
-        settings.targetLanguage = lang
-        reTranslateCurrent()
-    }
-
-    /// 用当前源/目标语言设置重新翻译当前文本
-    private func reTranslateCurrent() {
-        let model = panelController.model
-        guard !model.sourceText.isEmpty else { return }
-        let image = model.image
-        // 重置翻译状态（保留当前 tab）
-        model.phase = .translating
-        guard let image else {
-            // 无图片时仅更新译文（可能来自实时翻译场景）
-            let text = model.sourceText
-            performDirectTranslate(text: text)
-            return
-        }
-        translate(text: model.sourceText, image: image, model: model, preserveTab: true, addHistory: false)
-    }
-
-    /// 无图片时的直接翻译（如实时翻译场景切换语种）
-    private func performDirectTranslate(text: String) {
-        let model = panelController.model
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
-        let source = determineSourceLanguage(for: trimmed)
-        let target = effectiveTargetLanguage(source: source)
-        // 与 liveTranslate 一致：语向判定后立即同步源/目标两个菜单
-        model.sourceLanguage = source
-        model.targetLanguage = target
-        model.isLiveTranslating = true
-
-        liveTranslateGeneration &+= 1
-        let generation = liveTranslateGeneration
-        activeTranslationCount += 1
-
+        UserDefaults.standard.set(true, forKey: "st.hasLaunched")
+        panelController.show(near: nil)
+        NSApp.activate(ignoringOtherApps: true)
         translationHost.show()
-        let service = TranslationService(
-            config: .init(
-                primary: model.engineOverride ?? settings.primaryEngine,
-                openaiBaseURL: settings.openaiBaseURL,
-                openaiModel: settings.openaiModel,
-                openaiAPIKey: settings.openaiAPIKey,
-                deeplAPIKey: settings.deeplAPIKey,
-                anchor: translationHost.anchor,
-                proxy: settings.engineProxy
-            )
-        )
-        Task { [weak self, weak model] in
-            guard let self, let model else { return }
-            defer {
-                self.activeTranslationCount -= 1
-                if self.activeTranslationCount <= 0 {
-                    self.activeTranslationCount = 0
-                    self.translationHost.hide()
-                }
-            }
-            guard generation == self.liveTranslateGeneration else { return }
-            do {
-                let (translation, provider, fallback) = try await service.translate(
-                    trimmed,
-                    from: source,
-                    to: target
-                )
-                guard generation == self.liveTranslateGeneration else { return }
-                model.translatedText = translation
-                model.providerName = provider
-                model.isLiveTranslating = false
-                model.phase = .done
-                showFallbackNotice(fallback, in: model)
-            } catch is CancellationError {
-                // 请求被取消（防抖被新输入取代 / 锚点窗口隐藏清队），静默处理不打扰用户
-                return
-            } catch {
-                guard generation == self.liveTranslateGeneration else { return }
-                model.isLiveTranslating = false
-                model.phase = .failed("翻译失败：\(error.localizedDescription)")
-            }
-        }
     }
 
-    /// 实时翻译：翻译页签左侧原文编辑后即时翻译，右侧实时更新
-    private func liveTranslate(text: String) {
-        let model = panelController.model
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // 清空时立即清空译文，无需等待防抖
-        if trimmed.isEmpty {
-            liveTranslateDebounce?.cancel()
-            liveTranslateGeneration &+= 1
-            model.translatedText = ""
-            model.collectNotice = ""
-            model.isLiveTranslating = false
-            return
-        }
-
-        // 输入发生变动时立即标记翻译中状态（右侧译文区即刻呈现更新反馈）
-        model.isLiveTranslating = true
-
-        // 编辑停顿 250ms 后再翻译，避免连续输入时反复请求
-        // （400ms 偏保守，叠加引擎链耗时后体感延迟明显）
-        liveTranslateDebounce?.cancel()
-        liveTranslateDebounce = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
-            self?.performLiveTranslate(text: trimmed)
-        }
-    }
-
-    /// 实际执行实时翻译请求（防抖后调用）
-    private func performLiveTranslate(text: String) {
-        let model = panelController.model
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            model.translatedText = ""
-            model.collectNotice = ""
-            model.isLiveTranslating = false
-            return
-        }
-        model.isLiveTranslating = true
-        // 同步源文本（编辑视图已更新 model.sourceText，这里仅确保一致）
-        // ⚠️ 注意：不要把 trim 后的文本回写 model.sourceText！编辑框在 textDidChange 里
-        // 已经用原始文本更新过 binding；若这里回写 trim 后的值，SwiftUI updateNSView 会
-        // 因 textView.string != text 触发 setAttributedString 全量重置，把刚输入的
-        // 行尾空格/回车换行「吃掉」（表现为空格和回车总是被清理）。
-        let source = determineSourceLanguage(for: trimmed)
-        // 若源语言与目标语言相同，自动切到英文
-        let target = effectiveTargetLanguage(source: source)
-        // 语向判定（主线程同步）完成后立即同步两个菜单：
-        // 若只更新目标、源等翻译完成才更新，输入语种变化时会出现
-        // 「目标先变、源延迟几秒才变」的不同步观感
-        model.sourceLanguage = source
-        model.targetLanguage = target
-        // 生成序号，仅最新一次请求的结果生效（防止旧请求覆盖新输入）
-        liveTranslateGeneration &+= 1
-        let generation = liveTranslateGeneration
-        activeTranslationCount += 1
-
-        translationHost.show()
-        let service = TranslationService(
-            config: .init(
-                primary: model.engineOverride ?? settings.primaryEngine,
-                openaiBaseURL: settings.openaiBaseURL,
-                openaiModel: settings.openaiModel,
-                openaiAPIKey: settings.openaiAPIKey,
-                deeplAPIKey: settings.deeplAPIKey,
-                anchor: translationHost.anchor,
-                proxy: settings.engineProxy
-            )
-        )
-        Task { [weak self, weak model] in
-            guard let self, let model else { return }
-            defer {
-                self.activeTranslationCount -= 1
-                if self.activeTranslationCount <= 0 {
-                    self.activeTranslationCount = 0
-                    self.translationHost.hide()
-                }
-            }
-            // 仅当仍是最新请求时才更新结果，旧请求直接丢弃
-            guard generation == self.liveTranslateGeneration else { return }
-            do {
-                let (translation, provider, fallback) = try await service.translate(
-                    trimmed,
-                    from: source,
-                    to: target
-                )
-                // 请求期间可能又有新编辑，再次校验后才更新
-                guard generation == self.liveTranslateGeneration else { return }
-                model.translatedText = translation
-                model.providerName = provider
-                model.collectNotice = ""
-                model.isLiveTranslating = false
-                showFallbackNotice(fallback, in: model)
-            } catch is CancellationError {
-                // 请求被取消（被更新输入取代 / 锚点窗口隐藏清队），静默处理不打扰用户
-                return
-            } catch {
-                guard generation == self.liveTranslateGeneration else { return }
-                model.translatedText = ""
-                model.isLiveTranslating = false
-                // 带上具体原因，避免只显示「实时翻译失败」无法定位（如 Unable to Translate = 语向不支持/未装包）
-                model.collectNotice = "实时翻译失败：\(error.localizedDescription)"
-                Task { [weak model] in
-                    try? await Task.sleep(nanoseconds: 5_000_000_000)
-                    model?.collectNotice = ""
-                }
-            }
-        }
-    }
-
-    /// 交换默认源/目标语言方向（如英译中 ↔ 中译英）
-    /// 用户点击 exchange 按钮具有最高优先级，锁死当前指定的语向
-    @objc private func swapLanguages() {
-        let model = panelController.model
-
-        // 1. 获取当前实际生效的源语言与目标语言
-        let currentTarget = model.targetLanguage
-        let detectedSource = !model.sourceText.isEmpty ? LanguageDetector.detect(model.sourceText) : nil
-        let currentSource: Language
-        if let panel = panelManualSource {
-            currentSource = panel
-        } else if let manual = settings.manualSourceLanguage {
-            currentSource = manual
-        } else if let modelSrc = model.sourceLanguage {
-            currentSource = modelSrc
-        } else if let detected = detectedSource {
-            currentSource = detected
-        } else {
-            currentSource = (currentTarget == .zhHans ? .en : .zhHans)
-        }
-
-        // 2. 交换得到新的源语言与目标语言
-        let newSource = currentTarget
-        var newTarget = currentSource
-
-        // 如果新源语言与新目标语言相同（如极端异常情况），自动反转对立语种
-        if newSource == newTarget {
-            newTarget = (newSource == .zhHans ? .en : .zhHans)
-        }
-
-        // 3. 交换语向是面板级临时锁定（新截屏自动解除自动检测），
-        //    仅目标语言作为偏好持久化
-        panelManualSource = newSource
-        settings.sourceHint = newSource
-        settings.targetLanguage = newTarget
-
-        model.sourceLanguage = newSource
-        model.targetLanguage = newTarget
-        model.collectNotice = "已切换语向：\(newSource.displayName) → \(newTarget.displayName)"
-
-        Task { [weak model] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            model?.collectNotice = ""
-        }
-
-        // 4. 文本与翻译处理
-        // 如果在翻译 Tab（或无图场景）且已有译文，则将原文与译文对调，实现最符合直觉的反向翻译
-        if (model.tab == .translation || model.image == nil) && !model.translatedText.isEmpty {
-            let textToTranslate = model.translatedText
-            model.sourceText = textToTranslate
-            model.translatedText = ""
-            performDirectTranslate(text: textToTranslate)
-            return
-        }
-
-        // 其他场景（如截图对比/识别）：使用新源语言和新目标语言对当前文本重新翻译
-        guard !model.sourceText.isEmpty else { return }
-        if model.phase == .idle {
-            performDirectTranslate(text: model.sourceText)
-        } else {
-            reTranslateCurrent()
-        }
-    }
-
-    // MARK: - 生命周期
-
-    /// 关闭最后一个窗口不退出应用，保持菜单栏驻留
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
 
-    /// 点击程序坞图标时唤起结果面板，避免“不知道应用是否启动”
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             panelController.show(near: nil)
@@ -754,130 +61,355 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    // MARK: - 动作
+    // MARK: - macOS 系统右键 Services 入口（「使用 SnapTranslator 翻译」，零辅助功能权限）
 
-    @objc private func toggleDock() {
-        settings.showInDock.toggle()
-        applyDockPolicy()
-        // 切换后刷新菜单栏菜单中的勾选状态
-        statusItem?.menu = buildMenu()
+    @objc func translateFromService(
+        _ pboard: NSPasteboard,
+        userData: String?,
+        error: AutoreleasingUnsafeMutablePointer<NSString?>
+    ) {
+        guard let text = pboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty
+        else { return }
+        panelController.show(near: nil)
+        pipeline.translateTextImmediately(text, addHistory: true)
     }
 
-    /// 截屏前是否隐藏过面板（用于取消框选时判断是否恢复）
-    private var didHidePanelForCapture = false
+    // MARK: - 模块装配
 
-    @objc private func startCapture() {
-        // 设置开启且面板可见时先隐藏，避免面板出现在截图中；
-        // 取消框选由 onCancelled 恢复，截屏成功由 handleCaptured 重新展示
-        if settings.hideWindowOnCapture, panelController.isVisible {
-            panelController.hide()
-            didHidePanelForCapture = true
-        } else {
-            didHidePanelForCapture = false
+    private func setupMenuBar() {
+        let controller = MenuBarController(
+            settings: settings,
+            actions: .init(
+                startCapture: { [weak self] in self?.startCapture(defaultAction: .translate) },
+                recaptureLastRegion: { [weak self] in self?.recaptureLastRegion() },
+                startSilentOCR: { [weak self] in self?.startCapture(defaultAction: .silentOCR) },
+                translateClipboard: { [weak self] in self?.translateClipboard() },
+                togglePanel: { [weak self] in self?.panelController.toggle() },
+                toggleOfflineMode: { [weak self] in self?.toggleOfflineMode() },
+                toggleDock: { [weak self] in self?.toggleDock() },
+                openHistory: { [weak self] in self?.openHistory() },
+                openWordBook: { [weak self] in self?.openWordBook() },
+                openSettings: { [weak self] in self?.openSettings() },
+                showAbout: { NSApp.orderFrontStandardAboutPanel(nil) }
+            )
+        )
+        controller.setup()
+        menuBarController = controller
+    }
+
+    private func wirePanelActions() {
+        panelController.onStartCapture = { [weak self] in
+            self?.startCapture(defaultAction: .translate)
         }
-        captureCoordinator.begin()
+        panelController.onStartSilentOCR = { [weak self] in
+            self?.startCapture(defaultAction: .silentOCR)
+        }
+        panelController.onRecaptureLastRegion = { [weak self] in
+            self?.recaptureLastRegion()
+        }
+        panelController.onTranslateClipboard = { [weak self] in
+            self?.translateClipboard()
+        }
+        panelController.onCollect = { [weak self] phrase, context in
+            self?.collectWord(phrase, context: context)
+        }
+        panelController.onRetry = { [weak self] in
+            self?.pipeline.retry()
+        }
+        panelController.onSwapLanguages = { [weak self] in
+            self?.pipeline.swapLanguages()
+        }
+        panelController.onOpenWordBook = { [weak self] in
+            self?.openWordBook()
+        }
+        panelController.onOpenHistory = { [weak self] in
+            self?.openHistory()
+        }
+        panelController.onLiveTranslate = { [weak self] text in
+            self?.pipeline.scheduleLiveTranslate(text: text)
+        }
+        panelController.onSourceLanguageChange = { [weak self] lang in
+            self?.pipeline.setSourceLanguage(lang)
+        }
+        panelController.onTargetLanguageChange = { [weak self] lang in
+            self?.pipeline.setTargetLanguage(lang)
+        }
+        panelController.onEngineChange = { [weak self] engine in
+            self?.pipeline.setEngineOverride(engine)
+        }
+        panelController.onStyleChange = { [weak self] style in
+            self?.pipeline.setStyleOverride(style)
+        }
+        panelController.onToggleCompare = { [weak self] in
+            self?.pipeline.toggleCompareMode()
+        }
+        panelController.onQuickExplain = { [weak self] phrase, context in
+            self?.pipeline.quickExplain(phrase: phrase, context: context)
+        }
+        panelController.onImportImage = { [weak self] image in
+            self?.handleImportedImage(image)
+        }
+        panelController.onPinImage = { [weak self] image, title in
+            self?.pinController.pin(image: image, title: title)
+        }
+        panelController.onRestoreHistory = { [weak self] record in
+            self?.restoreHistoryRecord(record)
+        }
+        panelController.onToggleSmartMerge = { [weak self] in
+            self?.pipeline.toggleSmartMerge()
+        }
+        panelController.onClear = { [weak self] in
+            self?.pipeline.cancelOngoingWork()
+        }
     }
 
-    @objc private func recaptureLastRegion() {
+    private func wireCaptureCoordinator() {
+        captureCoordinator.onCaptured = { [weak self] image, rect, action in
+            self?.handleCaptured(image: image, rect: rect, action: action)
+        }
+        captureCoordinator.onPermissionDenied = { [weak self] in
+            self?.notifyPermissionDenied()
+        }
+        captureCoordinator.onCancelled = {}
+        captureCoordinator.onDirectCaptureFailed = {}
+    }
+
+    /// 细粒度订阅设置项：仅对真正变化的属性做出精准响应，彻底告别修改透明度时重注册热键与重置窗口大小
+    private func observeSettingsFineGrained() {
+        Publishers.MergeMany(
+            settings.$hotkeyCapture.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$hotkeyRecapture.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$hotkeyTogglePanel.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$hotkeySilentOCR.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$hotkeyTranslateClipboard.dropFirst().map { _ in () }.eraseToAnyPublisher()
+        )
+        .debounce(for: .milliseconds(250), scheduler: RunLoop.main)
+        .sink { [weak self] in
+            self?.registerAllHotkeys()
+            self?.menuBarController?.refreshMenu()
+        }
+        .store(in: &subscriptions)
+
+        settings.$alwaysOnTop
+            .dropFirst()
+            .sink { [weak self] pinned in
+                self?.panelController.applyPin(alwaysOnTop: pinned)
+                self?.applyPopupWindowLevels()
+            }
+            .store(in: &subscriptions)
+
+        settings.$defaultWindowSize
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.panelController.applyDefaultWindowSize(force: false)
+            }
+            .store(in: &subscriptions)
+
+        settings.$historyLimit
+            .dropFirst()
+            .sink { [weak self] limit in
+                self?.historyStore.trim(limit: limit)
+            }
+            .store(in: &subscriptions)
+
+        Publishers.Merge(
+            settings.$showInDock.dropFirst().map { _ in () },
+            settings.$offlineOnlyMode.dropFirst().map { _ in () }
+        )
+        .sink { [weak self] in
+            self?.menuBarController?.refreshMenu()
+        }
+        .store(in: &subscriptions)
+    }
+
+    private func registerAllHotkeys() {
+        hotkeyManager.unregisterAll()
+        var failed: [String] = []
+
+        if !hotkeyManager.register(.capture, spec: settings.hotkeyCapture, handler: { [weak self] in
+            Task { @MainActor in self?.startCapture(defaultAction: .translate) }
+        }) { failed.append("截屏翻译(\(settings.hotkeyCapture.display))") }
+
+        if !hotkeyManager.register(.recapture, spec: settings.hotkeyRecapture, handler: { [weak self] in
+            Task { @MainActor in self?.recaptureLastRegion() }
+        }) { failed.append("重截上次区域(\(settings.hotkeyRecapture.display))") }
+
+        if !hotkeyManager.register(.togglePanel, spec: settings.hotkeyTogglePanel, handler: { [weak self] in
+            Task { @MainActor in self?.panelController.toggle() }
+        }) { failed.append("显示/隐藏窗口(\(settings.hotkeyTogglePanel.display))") }
+
+        if !hotkeyManager.register(.silentOCR, spec: settings.hotkeySilentOCR, handler: { [weak self] in
+            Task { @MainActor in self?.startCapture(defaultAction: .silentOCR) }
+        }) { failed.append("静默截屏 OCR(\(settings.hotkeySilentOCR.display))") }
+
+        if !hotkeyManager.register(.translateClipboard, spec: settings.hotkeyTranslateClipboard, handler: { [weak self] in
+            Task { @MainActor in self?.translateClipboard() }
+        }) { failed.append("翻译剪贴板(\(settings.hotkeyTranslateClipboard.display))") }
+
+        if !failed.isEmpty {
+            AppLogger.hotkey.warning("部分快捷键注册失败: \(failed.joined(separator: ", "), privacy: .public)")
+            panelController.model.showNotice("部分快捷键冲突：\(failed.first ?? "")", kind: .warning, duration: 4.0)
+        }
+    }
+
+    // MARK: - 核心动作
+
+    private func startCapture(defaultAction: CaptureAction) {
+        captureCoordinator.begin(
+            defaultAction: defaultAction,
+            refineMode: settings.captureRefineToolbar,
+            excludeOwnWindows: settings.hideWindowOnCapture
+        )
+    }
+
+    private func recaptureLastRegion() {
         guard let rect = CaptureCoordinator.adjustedLastRect() else {
-            startCapture()
+            startCapture(defaultAction: .translate)
             return
         }
-        // 立即重截（无框选、无取消路径），同样先隐藏面板避免入镜；
-        // 失败路径（选区无效/权限被拒）由 onDirectCaptureFailed 恢复面板
-        if settings.hideWindowOnCapture, panelController.isVisible {
-            panelController.hide()
-            didHidePanelForCapture = true
-        }
-        captureCoordinator.capture(rect: rect)
+        captureCoordinator.capture(
+            rect: rect,
+            action: .translate,
+            excludeOwnWindows: settings.hideWindowOnCapture
+        )
     }
 
-    @objc private func togglePanel() {
-        panelController.toggle()
-    }
-
-    @objc private func showHistory() {
-        let model = panelController.model
-        // 显示面板并切到历史查看
-        if !panelController.isVisible {
+    private func translateClipboard() {
+        if let text = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty {
             panelController.show(near: nil)
-        }
-        if !model.history.isEmpty {
-            model.phase = .idle  // 让历史在 idle 态显示
-        }
-    }
-
-    @objc private func openWordBook() {
-        guard let wordBook else {
-            presentErrorAlert("生词本不可用", error: nil)
+            pipeline.translateTextImmediately(text, addHistory: true)
             return
         }
-        let view = WordBookView(
-            store: wordBook,
-            onTranslate: { [weak self] text in
-                guard let self else { return "" }
-                return await self.translateForWordBook(text: text)
-            }
-        )
-        showWindow(
-            key: \AppDelegate.wordBookWindow,
-            title: "生词本",
-            content: view
-        )
+        if let image = NSPasteboard.readImage() {
+            handleImportedImage(image)
+            return
+        }
+        HUDNotifier.shared.show("剪贴板中暂无可翻译的文本或图片", systemImage: "info.circle.fill")
     }
 
-    /// 生词本界面调用的翻译
-    private func translateForWordBook(text: String) async -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
+    private func handleImportedImage(_ image: NSImage) {
+        panelController.show(near: nil)
+        pipeline.processCapturedImage(image, preserveTab: false, addHistory: true)
+    }
 
-        let source = determineSourceLanguage(for: trimmed)
-        let target = effectiveTargetLanguage(source: source)
+    private func handleCaptured(image: NSImage, rect: CGRect, action: CaptureAction) {
+        switch action {
+        case .translate:
+            panelController.show(near: rect)
+            pipeline.processCapturedImage(image, preserveTab: false, addHistory: true)
 
-        translationHost.show()
-        activeTranslationCount += 1
-        defer {
-            activeTranslationCount -= 1
-            if activeTranslationCount <= 0 {
-                activeTranslationCount = 0
-                translationHost.hide()
+        case .silentOCR:
+            Task { [weak self] in
+                guard let self else { return }
+                if let text = await self.pipeline.silentOCR(image: image) {
+                    let count = text.count
+                    HUDNotifier.shared.show("已识别并复制 \(count) 字到剪贴板", systemImage: "doc.on.clipboard.fill")
+                } else {
+                    HUDNotifier.shared.show("未识别到文字", systemImage: "exclamationmark.triangle.fill")
+                }
             }
-        }
 
-        let service = TranslationService(
-            config: .init(
-                primary: settings.primaryEngine,
-                openaiBaseURL: settings.openaiBaseURL,
-                openaiModel: settings.openaiModel,
-                openaiAPIKey: settings.openaiAPIKey,
-                deeplAPIKey: settings.deeplAPIKey,
-                anchor: translationHost.anchor,
-                proxy: settings.engineProxy
-            )
-        )
-        do {
-            let (translation, _, _) = try await service.translate(
-                trimmed,
-                from: source,
-                to: target
-            )
-            return translation
-        } catch {
-            return "翻译失败：\(error.localizedDescription)"
+        case .pinImage:
+            pinController.pin(image: image, near: rect, title: "截图贴图")
+
+        case .saveImage:
+            saveScreenshotPNG(image)
         }
     }
 
-    @objc private func openSettings() {
+    private func saveScreenshotPNG(_ image: NSImage) {
+        guard let png = image.pngData() else { return }
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.png]
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        savePanel.nameFieldStringValue = "SnapTranslator-\(formatter.string(from: Date())).png"
+        NSApp.activate(ignoringOtherApps: true)
+        savePanel.begin { response in
+            guard response == .OK, let url = savePanel.url else { return }
+            do {
+                try png.write(to: url, options: .atomic)
+                Task { @MainActor in
+                    HUDNotifier.shared.show("已保存截图：\(url.lastPathComponent)", systemImage: "checkmark.circle.fill")
+                }
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+        }
+    }
+
+    private func toggleDock() {
+        settings.showInDock.toggle()
+        NSApp.setActivationPolicy(settings.showInDock ? .regular : .accessory)
+        menuBarController?.refreshMenu()
+    }
+
+    private func toggleOfflineMode() {
+        settings.offlineOnlyMode.toggle()
+        menuBarController?.refreshMenu()
+        panelController.model.showNotice(
+            settings.offlineOnlyMode ? "已开启纯离线隐私模式" : "已关闭纯离线模式",
+            kind: .info
+        )
+    }
+
+    private func restoreHistoryRecord(_ record: HistoryRecord) {
+        let img = historyStore.image(for: record)
+        panelController.model.restore(record: record, image: img)
+        panelController.show(near: nil)
+    }
+
+    private func collectWord(_ phrase: String, context: String) {
+        let model = panelController.model
+        let source = model.sourceLanguage?.rawValue ?? "auto"
+        let target = model.targetLanguage.rawValue
+        // 若收藏整句则顺带保存当前整句译文；若是划词速释则 context 为释义
+        let autoTranslation = (phrase == model.sourceText) ? model.translatedText : ""
+        if wordBook.add(
+            phrase: phrase,
+            context: context,
+            translation: autoTranslation,
+            source: source,
+            target: target
+        ) {
+            model.showNotice("已收藏「\(String(phrase.prefix(12)))」", kind: .success)
+            model.selectedText = ""
+            model.leftSelectedText = ""
+        } else {
+            model.showNotice("收藏失败，请重试", kind: .error)
+        }
+    }
+
+    // MARK: - 功能窗口管理
+
+    private func openHistory() {
+        let view = HistoryView(store: historyStore) { [weak self] record in
+            self?.restoreHistoryRecord(record)
+        }
+        showWindow(key: \AppDelegate.historyWindow, title: "识别历史", size: NSSize(width: 760, height: 480), content: view)
+    }
+
+    private func openWordBook() {
+        let view = WordBookView(store: wordBook) { [weak self] text, src, tgt in
+            guard let self else { return "" }
+            return await self.pipeline.translateForWordBook(text: text, source: src, target: tgt)
+        }
+        showWindow(key: \AppDelegate.wordBookWindow, title: "生词本", size: NSSize(width: 760, height: 480), content: view)
+    }
+
+    private func openSettings() {
         let view = SettingsView(settings: settings) { [weak self] in
             self?.prepareAppleLanguages()
         }
-        showWindow(key: \AppDelegate.settingsWindow, title: "设置", content: view)
+        showWindow(key: \AppDelegate.settingsWindow, title: "设置", size: NSSize(width: 720, height: 560), content: view)
     }
 
-    /// 显示（或前置）普通功能窗口
     private func showWindow<Content: View>(
         key: ReferenceWritableKeyPath<AppDelegate, NSWindow?>,
         title: String,
+        size: NSSize,
         content: Content
     ) {
         if let existing = self[keyPath: key] {
@@ -886,258 +418,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 480),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = title
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = .textBackgroundColor
         window.contentView = NSHostingView(rootView: content)
         window.isReleasedWhenClosed = false
         window.center()
-        // 层级跟随置顶状态：面板置顶在 .floating（3），弹窗若是普通层级（0）会被盖住，
-        // 取 .modalPanel（8）保证生词本/设置等弹窗永远显示在主面板之上
         window.level = settings.alwaysOnTop ? .modalPanel : .normal
         self[keyPath: key] = window
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // MARK: - 核心流程
-
-    private func handleCaptured(image: NSImage, rect: CGRect) {
-        didHidePanelForCapture = false
-        lastRequest = (image, "", [])
-        let model = panelController.model
-        model.defaultDoneTab = settings.defaultDoneTab
-        model.begin(image: image, target: settings.targetLanguage)
-        panelController.show(near: rect)
-
-        recognizeAndTranslate(image: image, preserveTab: false, addHistory: true)
-    }
-
-    /// 对指定截图重跑 OCR 并翻译（截屏与「重新识别/翻译」重试共用）
-    private func recognizeAndTranslate(image: NSImage, preserveTab: Bool, addHistory: Bool) {
-        let model = panelController.model
-        ocrGeneration &+= 1
-        let generation = ocrGeneration
-        model.phase = .recognizing
-        // 全新截屏（非重试）：解除面板内的临时手动语向，恢复自动检测；
-        // 设置页的源语言锁定是持久偏好，不在此清除
-        if addHistory {
-            panelManualSource = nil
-        }
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                // 始终包含全语种识别，避免 sourceHint 限制 OCR 导致中文等语言无法识别
-                let languages = Self.allRecognitionLanguages(hint: self.settings.sourceHint)
-                let result = try await self.ocrService.recognize(image, languages: languages)
-                // 新的截屏/重试已经开始：丢弃过期 OCR 结果，避免旧文本覆盖新截图状态
-                guard generation == self.ocrGeneration else { return }
-                guard !result.fullText.isEmpty else {
-                    model.failed("未识别到文字，请调整区域后重试")
-                    return
-                }
-                let ocrLines = result.lines.map { (text: $0.text, rect: $0.boundingBox) }
-                model.recognized(text: result.fullText, lines: ocrLines)
-                self.lastRequest = (image, result.fullText, ocrLines)
-                self.translate(
-                    text: result.fullText,
-                    image: image,
-                    model: model,
-                    preserveTab: preserveTab,
-                    addHistory: addHistory
-                )
-            } catch {
-                guard generation == self.ocrGeneration else { return }
-                model.failed("OCR 失败：\(error.localizedDescription)")
-            }
+    private func applyPopupWindowLevels() {
+        let level: NSWindow.Level = settings.alwaysOnTop ? .modalPanel : .normal
+        for window in [wordBookWindow, historyWindow, settingsWindow].compactMap({ $0 }) {
+            window.level = level
         }
     }
 
-    /// 构建 OCR 识别语言集：始终包含默认全语种，sourceHint 仅作优先级前置
-    private static func allRecognitionLanguages(hint: Language?) -> [String] {
-        var languages = VisionOCRService.defaultRecognitionLanguages
-        if let hintCode = hint?.visionCode, !languages.contains(hintCode) {
-            languages.insert(hintCode, at: 0)
-        }
-        return languages
-    }
-
-    /// 展示引擎降级提示：主链上有引擎失败、由后续引擎接手时告知用户，
-    /// 避免「自动」模式悄悄落到 Apple 本地后用户疑惑（Google 怎么不工作了）
-    private func showFallbackNotice(_ message: String?, in model: ResultModel) {
-        guard let message, !message.isEmpty else { return }
-        model.collectNotice = message
-        Task { [weak model] in
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            if model?.collectNotice == message {
-                model?.collectNotice = ""
-            }
-        }
-    }
-
-    /// 若检测到的源语言与目标语言相同，自动切换目标，保证任何持久化状态下源文本总能翻出去
-    /// 例如用户默认目标为中文，截图中文内容时自动改为翻译到英文；
-    /// 反向场景（历史交换/设置残留导致目标语言为英文、输入英文）则自愈切到中文，
-    /// 否则源==目标会让引擎原样返回并标记「无需翻译」
-    private func effectiveTargetLanguage(source: Language?) -> Language {
-        let target = settings.targetLanguage
-        // 核心：若用户手动指定了源语言（面板临时锁定或设置页持久锁定），
-        // 用户的选择优先级最高，绝不擅自篡改目标语言
-        if settings.manualSourceLanguage != nil || panelManualSource != nil {
-            return target
-        }
-        guard let source else { return target }
-        if source == target { return target == .en ? .zhHans : .en }
-        // 源与目标同为中文简繁变体也按退化处理：Apple 不支持 zh-Hant↔zh-Hans 互译
-        // （实测未装包直接抛 Unable to Translate），且简繁转换本就不是翻译需求，
-        // 自动切英文保证请求总能落到受支持且已装包的语向上。
-        let zhVariants: Set<Language> = [.zhHans, .zhHant]
-        if zhVariants.contains(source) && zhVariants.contains(target) { return .en }
-        return target
-    }
-
-    /// 确定源语言，优先级从高到低：
-    /// ① 面板内临时锁定的源语言（语言菜单选择 / 交换语向，新截屏自动解除）
-    /// ② 设置页持久锁定的源语言
-    /// ③ 自动检测；检测失败时返回 nil，交给翻译引擎自动检测——
-    ///    不再回退 sourceHint：hint 是上一次交换语向/菜单选择的残留提示，
-    ///    检测失败的输入（如超短英文「ok」）被 hint 钉成不匹配的源语言
-    ///    （英文被钉成中文源）比「引擎自己检测」更糟
-    private func determineSourceLanguage(for text: String) -> Language? {
-        if let panel = panelManualSource {
-            return panel
-        }
-        if let manual = settings.manualSourceLanguage {
-            return manual
-        }
-        return LanguageDetector.detect(text)
-    }
-
-    /// 工具栏「重新识别/翻译」：对上次截图重跑 OCR + 翻译，可随时点击
-    private func retryTranslation() {
-        guard let last = lastRequest else {
-            panelController.show(near: nil)
-            return
-        }
-        panelController.show(near: nil)
-        recognizeAndTranslate(image: last.image, preserveTab: true, addHistory: false)
-    }
-
-    private func translate(
-        text: String,
-        image: NSImage,
-        model: ResultModel,
-        preserveTab: Bool = false,
-        addHistory: Bool = true
-    ) {
-        // 确保翻译锚点窗口可见，TranslationSession 才能可靠触发
-        translationHost.show()
-        // 源语言判定：用户手动选择优先，未选择时自动检测
-        let source = determineSourceLanguage(for: text)
-        // 若源语言与目标语言相同（如截图中文但目标也是中文），自动改为翻译到英文
-        let target = effectiveTargetLanguage(source: source)
-        // 语向决策日志：出现「识别语向不对」类反馈时用
-        // `log show --predicate 'process == "SnapTranslator"'` 直接定位
-        NSLog("STDIAG translate src=%@ tgt=%@ panelManual=%@ settingsManual=%@ detected=%@ textHead=%@",
-              source?.rawValue ?? "nil", target.rawValue,
-              panelManualSource?.rawValue ?? "nil",
-              settings.manualSourceLanguage?.rawValue ?? "nil",
-              LanguageDetector.detect(text)?.rawValue ?? "nil",
-              String(text.prefix(24)))
-        // 生成序号，仅最新一次请求的结果生效（防止旧请求覆盖新输入）
-        translateGeneration &+= 1
-        let generation = translateGeneration
-        activeTranslationCount += 1
-
-        let service = TranslationService(
-            config: .init(
-                primary: model.engineOverride ?? settings.primaryEngine,
-                openaiBaseURL: settings.openaiBaseURL,
-                openaiModel: settings.openaiModel,
-                openaiAPIKey: settings.openaiAPIKey,
-                deeplAPIKey: settings.deeplAPIKey,
-                anchor: translationHost.anchor,
-                proxy: settings.engineProxy
-            )
-        )
-        // 更新面板中的实际语向（可能已被 effectiveTargetLanguage 自动调整）；
-        // 源/目标同一时刻更新，避免目标先变、源等翻译完成才变
-        model.sourceLanguage = source
-        model.targetLanguage = target
-        Task { [weak self] in
-            guard let self else { return }
-            defer {
-                self.activeTranslationCount -= 1
-                if self.activeTranslationCount <= 0 {
-                    self.activeTranslationCount = 0
-                    self.translationHost.hide()
-                }
-            }
-            do {
-                let (translation, provider, fallback) = try await service.translate(
-                    text,
-                    from: source,
-                    to: target
-                )
-                guard generation == self.translateGeneration else { return }
-                model.finished(
-                    translation: translation,
-                    provider: provider,
-                    source: source,
-                    preserveTab: preserveTab,
-                    addHistory: addHistory
-                )
-                showFallbackNotice(fallback, in: model)
-                self.trimHistory()
-            } catch {
-                guard generation == self.translateGeneration else { return }
-                model.failed("翻译失败：\(error.localizedDescription)")
-            }
-        }
-    }
-
-    // MARK: - 生词收藏
-
-    private func collectWord(_ phrase: String, context: String) {
-        let model = panelController.model
-        guard let wordBook else {
-            model.collectNotice = "生词本不可用"
-            return
-        }
-        let source = model.sourceLanguage?.rawValue ?? "auto"
-        let target = model.targetLanguage.rawValue
-        if wordBook.add(phrase: phrase, context: context, source: source, target: target) {
-            model.collectNotice = "已收藏「\(String(phrase.prefix(10)))」"
-            model.selectedText = ""
-            model.leftSelectedText = ""
-            Task { [weak model] in
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                model?.collectNotice = ""
-            }
-        } else {
-            model.collectNotice = "收藏失败，请重试"
-        }
-    }
-
-    /// 触发 Apple 翻译语言包下载：调起系统设置翻译界面
     private func prepareAppleLanguages() {
-        // 尝试多种系统设置 URL 以兼容不同 macOS 版本
         let urls = [
             URL(string: "x-apple.systempreferences:com.apple.Translation-Settings.extension"),
             URL(string: "x-apple.systempreferences:com.apple.preference.general?Translation"),
             URL(string: "x-apple.systempreferences:com.apple.preference.general"),
         ]
         var opened = false
-        for url in urls {
-            if let url {
-                opened = NSWorkspace.shared.open(url)
-                if opened { break }
+        for url in urls.compactMap({ $0 }) {
+            if NSWorkspace.shared.open(url) {
+                opened = true
+                break
             }
         }
-
         if !opened {
             let alert = NSAlert()
             alert.messageText = "无法打开系统翻译设置"
@@ -1148,42 +465,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         translationHost.hide()
     }
 
-    // MARK: - 提示
-
     private func notifyPermissionDenied() {
         let alert = NSAlert()
         alert.messageText = "需要屏幕录制权限"
         alert.informativeText = "请在 系统设置 → 隐私与安全性 → 屏幕录制 中勾选 SnapTranslator，然后重启应用。"
         alert.addButton(withTitle: "打开系统设置")
         alert.addButton(withTitle: "取消")
-        if alert.runModal() == .alertFirstButtonReturn {
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                NSWorkspace.shared.open(url)
-            }
+        if alert.runModal() == .alertFirstButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
         }
-    }
-
-    private func presentErrorAlert(_ message: String, error: Error?) {
-        let alert = NSAlert()
-        alert.messageText = message
-        alert.informativeText = error?.localizedDescription ?? "可能是快捷键与其他应用冲突，请在设置中更换键位。"
-        alert.runModal()
     }
 
     // MARK: - 界面诊断（--ui-diag）
 
-    /// 界面诊断：测试图走真实 OCR + 翻译管线，然后逐页签离屏渲染面板提取 PDF 文本，
-    /// 验证各页签内容是否真正进入渲染树。返回值 0 = 全部通过
     func runUIDiagnostic() -> Int32 {
         let model = panelController.model
         print("== UI 诊断开始 ==")
 
         handleCaptured(
             image: Self.makeDiagTestImage(),
-            rect: NSRect(x: 120, y: 480, width: 600, height: 240)
+            rect: NSRect(x: 120, y: 480, width: 600, height: 240),
+            action: .translate
         )
 
-        // 自旋等待 OCR + 翻译完成（最长 60s，不阻塞主 RunLoop）
         let deadline = Date().addingTimeInterval(60)
         loop: while Date() < deadline {
             switch model.phase {
@@ -1200,13 +505,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "\(model.phase)", model.tab.rawValue, model.sourceText.count, model.translatedText.count,
             model.providerName, model.sourceLanguage?.rawValue ?? "nil"
         ))
-        print("SOURCE=\(model.sourceText.prefix(160))")
-        print("TRANSLATED=\(model.translatedText.prefix(160))")
         guard case .done = model.phase, !model.sourceText.isEmpty else { return 1 }
 
-        // 逐页签离屏渲染，提取 PDF 文本验证
         var failures: Int32 = 0
-        let checks: [(ResultModel.Tab, String, String)] = [
+        let checks: [(PanelTab, String, String)] = [
             (.recognize, "识别", "DIAGNOSTIC"),
             (.translation, "翻译", String(model.translatedText.prefix(6))),
             (.sideBySide, "对照", String(model.translatedText.prefix(6))),
@@ -1217,15 +519,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let text = Self.pdfText(of: panelController.diagContentView)
             let hit = !needle.isEmpty && text.contains(needle)
             print("TAB \(name) pdfChars=\(text.count) contains(\(needle))=\(hit)")
-            if !hit {
-                failures += 1
-                // 仅失败时打印视图树辅助定位（如文本视图零宽之类的问题）
-                Self.dumpFullTree(of: panelController.diagContentView, depth: 0)
-            }
+            if !hit { failures += 1 }
         }
-        // 对比页签无文本要求，仅验证可渲染出非空内容
         model.tab = .oneToOne
-        RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.6))
+        RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.8))
         let oneToOnePdf = Self.pdfDataLength(of: panelController.diagContentView)
         print("TAB 对比 pdfBytes=\(oneToOnePdf)")
         if oneToOnePdf < 1000 { failures += 1 }
@@ -1234,34 +531,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return failures
     }
 
-    /// 诊断测试图：白底黑字，含英文标识词与中文句子
     private static func makeDiagTestImage() -> NSImage {
-        let size = NSSize(width: 600, height: 240)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        NSColor.white.setFill()
-        NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
-        NSColor.black.set()
+        let width = 600
+        let height = 240
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else { return NSImage(size: NSSize(width: width, height: height)) }
+
+        ctx.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+        let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: false)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
         ("DIAGNOSTIC Hello World" as NSString).draw(
             at: NSPoint(x: 24, y: 170),
-            withAttributes: [.font: NSFont.systemFont(ofSize: 30, weight: .bold)]
+            withAttributes: [.font: NSFont.systemFont(ofSize: 30, weight: .bold), .foregroundColor: NSColor.black]
         )
         ("这是界面诊断的中文测试句子，用于验证整体流程。" as NSString).draw(
             at: NSPoint(x: 24, y: 100),
-            withAttributes: [.font: NSFont.systemFont(ofSize: 24)]
+            withAttributes: [.font: NSFont.systemFont(ofSize: 24), .foregroundColor: NSColor.black]
         )
-        image.unlockFocus()
-        return image
+        NSGraphicsContext.restoreGraphicsState()
+
+        guard let cg = ctx.makeImage() else { return NSImage(size: NSSize(width: width, height: height)) }
+        return NSImage(cgImage: cg, size: NSSize(width: width, height: height))
     }
 
-    /// 离屏渲染视图并提取 PDF 第一页文本
     private static func pdfText(of view: NSView?) -> String {
         guard let view else { return "" }
         view.layoutSubtreeIfNeeded()
         let data = view.dataWithPDF(inside: view.bounds)
-        guard let document = PDFDocument(data: data), let page = document.page(at: 0) else {
-            return ""
-        }
+        guard let document = PDFDocument(data: data), let page = document.page(at: 0) else { return "" }
         return page.string ?? ""
     }
 
@@ -1269,23 +578,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let view else { return 0 }
         view.layoutSubtreeIfNeeded()
         return view.dataWithPDF(inside: view.bounds).count
-    }
-
-    /// 诊断用：打印完整视图树（含 NSScrollView 的 documentView 状态）
-    private static func dumpFullTree(of view: NSView?, depth: Int) {
-        guard let view, depth < 11 else { return }
-        var extra = ""
-        if let scrollView = view as? NSScrollView {
-            let doc = scrollView.documentView
-            let docText = (doc as? NSTextView)?.string ?? ""
-            extra = " doc=\(doc.map { String(describing: type(of: $0)) } ?? "nil") docFrame=\(doc?.frame ?? .zero) docChars=\(docText.count) clipSubs=\(scrollView.contentView.subviews.count)"
-        }
-        if let textView = view as? NSTextView {
-            extra = " textChars=\(textView.string.count)"
-        }
-        print("  TREE \(String(repeating: " ", count: depth * 2))\(String(describing: type(of: view))) frame=\(view.frame)\(extra)")
-        for sub in view.subviews {
-            dumpFullTree(of: sub, depth: depth + 1)
-        }
     }
 }

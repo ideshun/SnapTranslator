@@ -1,92 +1,79 @@
 # SnapTranslator
 
-轻量级 macOS 截屏翻译应用：全局快捷键 → 框选区域 → 离线 OCR → 离线优先翻译 → 原文/译文对照 → 选词收藏生词本。
+轻量级 macOS 截屏翻译应用：全局快捷键 → ScreenCaptureKit 瞬间定格框选 → 离线 Vision OCR 与智能段落排版 → 多引擎流式翻译 → 原文/译文/1:1 覆盖对照 → 生词本与桌面悬浮贴图。
 
-对标有道截屏翻译的核心体验，去掉词典、文档翻译、背单词、广告等一切冗余。零第三方依赖，纯系统框架。
+零第三方依赖，纯原生 macOS 框架（SwiftUI / AppKit / ScreenCaptureKit / Vision / Translation / CryptoKit）。
 
-## 功能
+## 核心功能
 
-- **截屏翻译**：`⌥S` 唤起框选（每屏遮罩、尺寸提示、ESC/右键取消），拖动框选任意区域，或鼠标悬停自动高亮整窗、单击直接选中（QQ 式窗口吸附）；松开/点击后自动 OCR（Apple Vision，端上离线）并翻译
-- **重截上次区域**：`⌥⇧S` 直接按上次选区截图，适合字幕/日志等连续翻译
-- **原文/译文对照**：原图 / 译文 / 并排三种视图切换；并排模式左右皆为图片形式（左原图、右译文渲染图），直观对照
-- **语种切换**：支持中译英等 12 种语言双向互译；结果面板一键「交换源/目标语言」立即重译
-- **屏幕置顶**：结果面板常驻最上层（可关，钉图标即时生效），失焦自动降透明度（可调），拖动、缩放、位置记忆
-- **选词收藏**：选中文字右键「收藏到生词本」，工具条「收藏」「收藏整句」按钮快捷收藏；结果面板工具条新增「生词本」按钮，随时查看；生词本支持搜索、删除、CSV 导出（UTF-8 BOM）
-- **一键复制** / 快速关闭
-- **菜单栏驻留**：关闭窗口不退出应用（含右上角红绿灯/⌘W），菜单栏访问全部功能，可开机自启
-- **程序坞图标**：默认在程序坞中显示图标，应用名和菜单显示在系统菜单栏左上角；可在设置或菜单栏中关闭「在程序坞中显示」切换为纯菜单栏驻留
-- **远程桌面适配**：结果面板支持右上角关闭/最小化/全屏（macOS 红绿灯），方便 VNC 远程操作
+- **截屏翻译（`⌥S`）**：基于 `ScreenCaptureKit` 瞬间定格，原生排除自身翻译面板不入镜；支持 QQ 式窗口吸附、拖拽框选、顶部快捷模式切换（**翻译 / 仅提文字 / 贴图置顶 / 保存截图**）与可选**选区精调工具栏**（拖拽边角与方向键微调）
+- **重截上次区域（`⌥⇧S`）**：一键按上次选区重新截图翻译，适合字幕、终端与日志连续查看
+- **静默截屏 OCR（`⌥⇧O`）**：框选后离线识别并直接写入剪贴板 + 轻量 HUD 提示，不弹窗打扰
+- **翻译剪贴板（`⌥⇧V`）& 系统右键服务**：支持一键翻译剪贴板中的文本或截图；在任意应用右键选中文本可通过「服务 → 使用 SnapTranslator 翻译」直达（零辅助功能权限）
+- **拖放 & 粘贴图片翻译**：直接拖入 PNG/JPG/WebP 或在面板中 `⌘V` 粘贴截图即可 OCR 并翻译
+- **四视图对照 & 1:1 覆盖图导出**：
+  - `⌘1` **识别**：支持「OCR 智能段落合并 / 保留原始换行」一键切换（自动修复 PDF/网页断行与英文连字符）
+  - `⌘2` **翻译**：左侧可编辑实时防抖翻译，右侧支持 **SSE 流式输出** 与 **双引擎并排对比**
+  - `⌘3` **对照**：原图 + 译文分栏对照，严格遵循「自适应宽度 / 原图」显示设置
+  - `⌘4` **对比（1:1）**：纯 CoreGraphics 后台异步渲染译文覆盖图（多点中位数采样、Retina 精准对齐、AI 编号块对齐），支持**复制译文图 / 保存 PNG / 钉在桌面悬浮贴图**
+- **桌面悬浮贴图**：把原图或 1:1 译文图钉在桌面任意位置（拖拽移动、滚轮缩放、`⌥+滚轮` 调透明度、右键复制/保存、ESC 关闭）
+- **AI 划词速释**：选中词句右键「AI 速释」即时获得词性、音标与语境释义
+- **持久化识别历史（`⌘H`）**：落盘保存原文、译文、压缩缩略图与 OCR 行坐标，支持搜索、星标保留、回看恢复 1:1 译文图
+- **生词本增强**：收藏自动保存译文，支持备注、标签、语种筛选，以及 **CSV（UTF-8 BOM）/ JSON 备份导入 / Anki TSV** 多格式导出
 
-## 翻译引擎（默认 GLM5.2，优先可靠）
+## 翻译引擎与隐私
 
-**主引擎默认固定使用智谱 GLM-5.2 模型**（OpenAI 兼容接口，网络稳定），彻底摆脱对 Google / Apple 离线翻译的依赖。其余引擎作为降级兜底。
+- **纯离线隐私模式**：设置或菜单栏一键开启，严格仅使用端上 Apple Vision OCR 与 Apple 本地翻译，绝不发起任何云端请求或自动降级
+- **AI 多配置预设（OpenAI 兼容，支持 SSE 流式）**：内置智谱 GLM-5.2、DeepSeek、OpenAI、OpenRouter、本地 Ollama 模板及自定义端点管理，支持**「测试连接」**与翻译风格切换（通用 / 技术文档 / 学术论文 / 简洁润色）
+- **DeepL API v2**：官方 Header 鉴权（`DeepL-Auth-Key`），区分 `ZH-HANS` / `ZH-HANT`
+- **Google 免费接口** & **Apple 系统翻译（macOS 15+ 离线）**：自动降级、细粒度语向级熔断器与内存 LRU 缓存（256 条）
 
-| 顺序 | 引擎 | 配置 |
-|------|------|------|
-| 1 | **GLM-5.2（OpenAI 兼容，默认）** | Base URL `https://open.bigmodel.cn/api/paas/v4`，模型 `glm-5.2`；在设置中填智谱 API Key（存 Keychain） |
-| 2 | Apple 系统翻译（完全离线，macOS 15+） | 首次使用前在设置中点「下载 Apple 翻译语言包」（使用专用锚点窗口，不干扰操作界面），翻译时若语言包未就绪会自动触发准备 |
-| 3 | Google 免费接口 | 零配置 |
-| 4 | DeepL | 设置中填 API Key（Free 档以 `:fx` 结尾） |
+## 构建与测试
 
-单引擎失败/超时（15 秒）自动降级到下一个。源语言自动检测（NLLanguageRecognizer），目标语言在设置中配置（12 种）。
-
-> **如何使用 GLM-5.2**：默认主引擎已是 GLM-5.2。只需在 **设置 → 引擎** 中填入智谱开放平台的 API Key 即可，无需改动 Base URL 和模型名（已固定）。智谱开放平台申请地址：https://open.bigmodel.cn/
-
-> **离线使用**：主引擎选「Apple 系统翻译（本地离线优先）」并下载语言包后，OCR 与翻译均在本地完成。注意：Apple 引擎失败（如语言包缺失、语向不支持）时会**自动降级到云引擎**，当前版本没有「绝不联网」的强制离线开关；需要绝对离线环境时请断网使用。Apple 引擎需 macOS 15+。
-
-## 构建与安装
-
-要求：macOS 14+，Xcode Command Line Tools（`xcodebuild` 完整版 Xcode 亦可）。
-
-> ⚠️ **新版纯 CLT 无法编译**：macOS 27 SDK 起 SwiftUI 的 `@State` 等属性包装器以宏实现，宏插件（SwiftUIMacros）仅随完整版 Xcode 分发。若 `swift build` 报 `external macro implementation type 'SwiftUIMacros.StateMacro' could not be found`，请安装完整版 Xcode 并执行 `sudo xcode-select -s /Applications/Xcode.app`。
+要求：macOS 14+，完整版 Xcode（macOS 27 SDK 起 SwiftUI 宏插件随完整版 Xcode 分发）。
 
 ```bash
-./make-app.sh
-# 产物：build/SnapTranslator.app（约 1 MB，ad hoc 签名）
-cp -R build/SnapTranslator.app /Applications/
-open /Applications/SnapTranslator.app
-```
-
-首次截屏会请求**屏幕录制**权限（系统设置 → 隐私与安全性 → 屏幕录制 → 勾选 SnapTranslator 后重启应用）。仅此一项权限，无辅助功能、无网络权限要求（云引擎按需联网）。
-
-> 本机 CLT 环境下 SwiftPM 内置 `sandbox-exec` 与外层沙箱冲突，构建命令统一带 `--disable-sandbox`。
-
-## 开发
-
-```bash
-# 构建（debug）
+# 调试构建
 swift build --disable-sandbox
 
-# 自测（40 项：快捷键/语种码/语种检测/Google 解析/生词本/CSV）
+# 运行 XCTest 单元测试套件（17 项覆盖语向策略、OCR 排版、1:1 渲染、取消/离线/熔断/缓存、持久化与无限历史保留）
+swift test --disable-sandbox
+
+# 运行 CLI 内建自测（33 项）
 .build/debug/SnapTranslator --self-test
 
-# 界面诊断：测试图走真实 OCR+翻译管线，逐页签离屏渲染验证内容显示
+# 界面离屏渲染诊断
 .build/debug/SnapTranslator --ui-diag
 
-# 打包 .app
+# 打包发布版 .app（build/SnapTranslator.app）
 ./make-app.sh
+# 打包并安装到 /Applications 并启动
+./make-app.sh --install
 ```
 
-### 技术栈
-
-Swift + SwiftUI/AppKit 混合 · Vision OCR · Translation 框架 · Carbon HotKey · CGDisplayCreateImage · JSON 生词本（Application Support）· Keychain（API Key）· SPM 单 target 模块化目录。
-
-### 目录结构
+## 目录架构
 
 ```
-Sources/SnapTranslator/
-├── App/            # main / AppDelegate / SelfTest
-├── Core/
-│   ├── Hotkey/     # Carbon 快捷键 + 录制控件
-│   ├── Capture/    # 框选遮罩 + 屏幕截图 + 坐标转换
-│   ├── OCR/        # Vision OCR + 语种检测
-│   ├── Translation/# 引擎协议 + Apple/GLM5.2/DeepL/Google + 调度降级
-│   └── WordBook/   # 生词模型 + JSON 存储 + CSV 导出
-├── Features/
-│   ├── ResultPanel/# NSPanel 置顶面板（对照视图、失焦透明）
-│   ├── WordBook/   # 生词本窗口
-│   └── Settings/   # 设置窗口（通用/快捷键/引擎）
-└── Shared/         # Language / Keychain / Extensions
+Sources/
+├── SnapTranslatorCore/         # 纯业务逻辑库 Target（可独立单元测试）
+│   ├── Domain/                 # Language / LanguagePolicy / AIProfile / TranslationStyle / OCRModels / AppLogger
+│   ├── Capture/                # ScreenCapture (ScreenCaptureKit) / WindowSnapLocator
+│   ├── Hotkey/                 # HotkeySpec / HotkeyManager
+│   ├── OCR/                    # VisionOCRService / OCRLayoutAnalyzer / LanguageDetector
+│   ├── Translation/            # TranslationService / NetworkSessionPool / EngineBreaker / TranslationCache / Providers
+│   ├── Rendering/              # ImageTranslationRenderer (纯 CoreGraphics 后台渲染)
+│   ├── Persistence/            # SettingsStore / HistoryStore / WordBookStore / WordBookExporter
+│   └── Shared/                 # KeychainStore / Extensions
+└── SnapTranslator/             # 轻量 AppKit + SwiftUI 壳层 Executable Target
+    ├── App/                    # main / AppDelegate / MenuBarController / TranslationPipeline / HUDNotifier / SelfTest / TranslateDiag
+    ├── Features/
+    │   ├── CaptureOverlay/     # 多屏遮罩 / 窗口吸附 / 精调手柄与快捷动作条
+    │   ├── ResultPanel/        # 拆分后的 Toolbar / StatusBar / 4 页签 / 文本与图片交互 / SpeechManager
+    │   ├── History/            # 可搜索持久化历史窗口
+    │   ├── WordBook/           # 增强生词本窗口
+    │   ├── PinWindow/          # 桌面悬浮贴图窗口
+    │   └── Settings/           # 设置窗口（通用 / 快捷键 / 多引擎预设 / 隐私与数据）
+    └── Shared/                 # DesignSystem / HoverFeedback
+Tests/
+└── SnapTranslatorTests/        # XCTest 单元测试套件
 ```
-
-设计文档见 `../SnapTranslator-功能方案与架构设计.md`。

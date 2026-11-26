@@ -1,9 +1,12 @@
 import AppKit
+import SnapTranslatorCore
 import SwiftUI
 
-/// 结果面板数据模型：一次截屏翻译的完整生命周期
+/// 结果面板数据模型：一次截屏/文本翻译的完整生命周期
 @MainActor
 final class ResultModel: ObservableObject {
+    typealias Tab = PanelTab
+
     enum Phase: Equatable {
         case idle
         case recognizing
@@ -12,154 +15,195 @@ final class ResultModel: ObservableObject {
         case failed(String)
     }
 
-    enum Tab: String, CaseIterable, Identifiable {
-        case recognize = "识别"
-        case translation = "翻译"
-        case sideBySide = "对照"
-        case oneToOne = "对比"
-
-        var id: String { rawValue }
-
-        var iconName: String {
-            switch self {
-            case .recognize: return "text.viewfinder"
-            case .translation: return "character.bubble"
-            case .sideBySide: return "rectangle.split.2x1"
-            case .oneToOne: return "sparkles.rectangle.stack"
-            }
+    struct Notice: Equatable {
+        enum Kind: Equatable {
+            case success
+            case info
+            case warning
+            case error
         }
+        let id = UUID()
+        let text: String
+        let kind: Kind
+    }
 
-        var tooltip: String {
-            switch self {
-            case .recognize:
-                return "识别：提取截图原文"
-            case .translation:
-                return "翻译：双栏实时翻译"
-            case .sideBySide:
-                return "对照：原图与译文对照"
-            case .oneToOne:
-                return "对比：1:1 原图覆盖翻译"
+    struct QuickExplainState: Equatable {
+        let phrase: String
+        var content: String
+        var isLoading: Bool
+        var errorMessage: String?
+    }
+
+    @Published var phase: Phase = .idle
+    @Published var tab: PanelTab = .translation
+
+    @Published var image: NSImage?
+    /// 每次载入新图生成唯一 UUID，彻底取代不安全的指针地址作为缓存键
+    @Published var imageID: UUID = UUID()
+    @Published var sourceText = ""
+    @Published var rawOCRText = ""
+    @Published var smartOCRText = ""
+    @Published var translatedText = ""
+    @Published var translatedBlocks: [String]?
+    @Published var sourceLanguage: Language?
+    @Published var targetLanguage: Language = .zhHans
+    @Published var providerName = ""
+    @Published var fromCache = false
+
+    /// 面板级临时引擎覆盖（切换后立即触发重译）；nil 表示跟随设置
+    @Published var engineOverride: PrimaryEngine?
+    /// 面板级临时翻译风格覆盖；nil 表示跟随设置
+    @Published var styleOverride: TranslationStyle?
+
+    @Published var selectedText = ""
+    @Published var leftSelectedText = ""
+    @Published var notice: Notice?
+    @Published var isLiveTranslating = false
+
+    /// OCR 识别到的行与坐标（供 1:1 渲染与持久化历史回看）
+    @Published var ocrLines: [OCRLine] = []
+
+    /// 异步渲染产出的 1:1 覆盖译文图（彻底离开 SwiftUI body 同步路径）
+    @Published var renderedCoverImage: NSImage?
+    @Published var isRenderingCover = false
+
+    /// 双引擎并排对比状态
+    @Published var compareEnabled = false
+    @Published var compareTranslatedText = ""
+    @Published var compareProviderName = ""
+    @Published var isCompareTranslating = false
+    @Published var compareError: String?
+
+    /// AI 划词速释浮层
+    @Published var quickExplain: QuickExplainState?
+
+    /// 截屏完成后默认聚焦页签
+    var defaultDoneTab: PanelTab = .oneToOne
+
+    private var noticeClearTask: Task<Void, Never>?
+    private var renderCoverTask: Task<Void, Never>?
+
+    var hasContent: Bool {
+        image != nil || !sourceText.isEmpty || !translatedText.isEmpty
+    }
+
+    /// 兼容旧诊断访问
+    var collectNotice: String {
+        get { notice?.text ?? "" }
+        set {
+            if newValue.isEmpty {
+                notice = nil
+            } else {
+                showNotice(newValue, kind: .info)
             }
         }
     }
 
-    @Published var phase: Phase = .idle
-    /// 默认聚焦「翻译」页签，支持输入内容实时翻译
-    @Published var tab: Tab = .translation
-    @Published var image: NSImage?
-    @Published var sourceText = ""
-    @Published var translatedText = ""
-    @Published var sourceLanguage: Language?
-    @Published var targetLanguage: Language = .zhHans
-    @Published var providerName = ""
-    /// 面板级临时引擎覆盖（左下角切换）：仅影响本面板后续翻译，不改设置里的主引擎；
-    /// nil 表示跟随设置
-    @Published var engineOverride: PrimaryEngine?
-    /// 右侧文本选区（供收藏按钮），非空时工具条显示「收藏选中」
-    @Published var selectedText = ""
-    /// 左侧文本选区（供左侧朗读时优先朗读选中内容）
-    @Published var leftSelectedText = ""
-    /// 收藏成功后的短暂提示
-    @Published var collectNotice = ""
-    /// 实时输入/修改时是否正在翻译（用于在翻译 Tab 显示丝滑的更新状态）
-    @Published var isLiveTranslating = false
-    /// OCR 识别到的每行文字及其在图像中的归一化位置（用于翻译覆盖定位）
-    @Published var ocrLines: [(text: String, rect: CGRect)] = []
-
-    /// 识别历史记录
-    @Published var history: [HistoryEntry] = []
-
-    /// 重试所需的上次请求内容
-    private(set) var retryImage: NSImage?
-    private(set) var retrySourceText = ""
-
-    struct HistoryEntry: Identifiable, Equatable {
-        let id = UUID()
-        let image: NSImage
-        let sourceText: String
-        let translatedText: String
-        let timestamp: Date
-        let sourceLanguage: Language?
-        let targetLanguage: Language
-        let providerName: String
-
-        static func == (lhs: HistoryEntry, rhs: HistoryEntry) -> Bool {
-            lhs.id == rhs.id
+    func showNotice(_ text: String, kind: Notice.Kind = .success, duration: Double = 2.5) {
+        noticeClearTask?.cancel()
+        let item = Notice(text: text, kind: kind)
+        notice = item
+        noticeClearTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            if self?.notice?.id == item.id {
+                self?.notice = nil
+            }
         }
     }
 
     func begin(image: NSImage, target: Language) {
         reset()
         self.image = image
-        retryImage = image
-        targetLanguage = target
-        phase = .recognizing
+        self.imageID = UUID()
+        self.targetLanguage = target
+        self.phase = .recognizing
     }
 
-    func recognized(text: String, lines: [(text: String, rect: CGRect)] = []) {
-        sourceText = text
-        retrySourceText = text
-        ocrLines = lines
+    func recognized(result: OCRResult, smartMerge: Bool) {
+        rawOCRText = result.rawText
+        smartOCRText = result.smartMergedText
+        sourceText = result.text(smartMerge: smartMerge)
+        ocrLines = result.lines
         phase = .translating
     }
 
-    /// 翻译完成后默认聚焦的页签（由设置页配置，AppDelegate 在截屏入口同步）
-    var defaultDoneTab: Tab = .oneToOne
-
-    /// 翻译完成回调
-    /// - Parameters:
-    ///   - preserveTab: 是否保留当前 tab（用于语言切换后的重新翻译），默认 false 切换到默认页签
-    ///   - addHistory: 是否记录历史，默认 true
     func finished(
-        translation: String,
-        provider: String,
+        outcome: TranslationOutcome,
         source: Language?,
-        preserveTab: Bool = false,
-        addHistory: Bool = true
+        translatedBlocks: [String]? = nil,
+        preserveTab: Bool = false
     ) {
-        translatedText = translation
-        providerName = provider
+        translatedText = outcome.translation
+        providerName = outcome.provider
+        fromCache = outcome.fromCache
         sourceLanguage = source
+        self.translatedBlocks = translatedBlocks
         isLiveTranslating = false
         phase = .done
+
         if !preserveTab {
-            // 翻译完成后聚焦默认页签（设置里可配，默认「对比」）
             tab = defaultDoneTab
         }
+        if let fallback = outcome.fallbackNotice, !fallback.isEmpty {
+            showNotice(fallback, kind: .warning, duration: 3.5)
+        }
+        scheduleCoverRender()
+    }
 
-        // 记录识别历史（条目图片降采样存储：上限可选 280 条，
-        // 全尺寸 Retina 截图逐条强持有可达 GB 级内存）
-        if addHistory, let image {
-            let entry = HistoryEntry(
-                image: Self.archivedImage(image),
-                sourceText: sourceText,
-                translatedText: translation,
-                timestamp: Date(),
-                sourceLanguage: source,
-                targetLanguage: targetLanguage,
-                providerName: provider
-            )
-            history.insert(entry, at: 0)
+    func restore(record: HistoryRecord, image: NSImage?) {
+        reset()
+        self.image = image
+        self.imageID = record.id
+        self.sourceText = record.sourceText
+        self.rawOCRText = record.sourceText
+        self.smartOCRText = record.sourceText
+        self.translatedText = record.translatedText
+        self.sourceLanguage = record.sourceLanguage
+        self.targetLanguage = record.targetLanguage
+        self.providerName = record.providerName
+        self.ocrLines = record.ocrLines
+        self.phase = .done
+        if image != nil {
+            self.tab = record.ocrLines.isEmpty ? .sideBySide : defaultDoneTab
+            scheduleCoverRender()
+        } else {
+            self.tab = .translation
         }
     }
 
-    /// 历史条目存档图：最长边超过 1600px 时降采样。历史仅用于回看浏览，
-    /// 回看时 ocrLines 为空、1:1 覆盖渲染不适用，降采样不影响查看体验
-    private static func archivedImage(_ image: NSImage) -> NSImage {
-        let maxSide: CGFloat = 1600
-        let size = image.size
-        let longest = max(size.width, size.height)
-        guard longest > maxSide else { return image }
-        let scale = maxSide / longest
-        let newSize = NSSize(
-            width: (size.width * scale).rounded(.down),
-            height: (size.height * scale).rounded(.down)
-        )
-        let resized = NSImage(size: newSize)
-        resized.lockFocus()
-        image.draw(in: NSRect(origin: .zero, size: newSize))
-        resized.unlockFocus()
-        return resized
+    /// 在后台线程异步渲染 1:1 译文覆盖图（零主线程卡顿）
+    func scheduleCoverRender() {
+        renderCoverTask?.cancel()
+        guard let image, !translatedText.isEmpty, !ocrLines.isEmpty,
+              let cg = image.cgImageFast
+        else {
+            renderedCoverImage = nil
+            isRenderingCover = false
+            return
+        }
+
+        let pointSize = image.size
+        let translation = translatedText
+        let lines = ocrLines
+        let blocks = translatedBlocks
+        let targetImageID = imageID
+
+        isRenderingCover = true
+        renderCoverTask = Task { [weak self] in
+            let rendered = await Task.detached(priority: .userInitiated) {
+                ImageTranslationRenderer.render(
+                    cgImage: cg,
+                    pointSize: pointSize,
+                    translation: translation,
+                    ocrLines: lines,
+                    translatedBlocks: blocks
+                )
+            }.value
+            guard !Task.isCancelled, let self, self.imageID == targetImageID else { return }
+            self.renderedCoverImage = rendered
+            self.isRenderingCover = false
+        }
     }
 
     func failed(_ message: String) {
@@ -168,23 +212,30 @@ final class ResultModel: ObservableObject {
     }
 
     func reset() {
+        renderCoverTask?.cancel()
+        noticeClearTask?.cancel()
         phase = .idle
         image = nil
+        imageID = UUID()
         sourceText = ""
+        rawOCRText = ""
+        smartOCRText = ""
         translatedText = ""
+        translatedBlocks = nil
+        renderedCoverImage = nil
+        isRenderingCover = false
         isLiveTranslating = false
         sourceLanguage = nil
         providerName = ""
-        engineOverride = nil
+        fromCache = false
         selectedText = ""
         leftSelectedText = ""
-        collectNotice = ""
-        retrySourceText = ""
+        notice = nil
         ocrLines = []
-    }
-
-    /// 是否有内容（截图/原文/译文），用于判断首次启动 vs 截图识别后的窗口大小
-    var hasContent: Bool {
-        image != nil || !sourceText.isEmpty || !translatedText.isEmpty
+        compareTranslatedText = ""
+        compareProviderName = ""
+        isCompareTranslating = false
+        compareError = nil
+        quickExplain = nil
     }
 }

@@ -1,296 +1,384 @@
 import AppKit
+import SnapTranslatorCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 生词本窗口：搜索、详情、删除、CSV 导出
-/// 支持词条翻译与语音朗读
+/// 现代 Master-Detail 生词本窗口：卡片词条列表 + 持久化译文 + 可交互标签胶囊 + CSV / Anki TSV / JSON 导入导出
 struct WordBookView: View {
     @ObservedObject var store: WordBookStore
-    /// 翻译回调：传入文本返回翻译结果
-    var onTranslate: (String) async -> String = { _ in "" }
+    var onTranslate: (String, Language?, Language?) async -> String = { _, _, _ in "" }
 
     @State private var searchText = ""
+    @State private var selectedLanguageFilter: String = "all"
     @State private var selectedWordID: Word.ID?
-    /// 当前选中词的翻译结果
-    @State private var translationResult = ""
     @State private var isTranslating = false
-    /// 操作结果提示（复制/删除/导出），几秒后自动消失
+    @State private var noteDraft = ""
+    @State private var newTagInput = ""
     @State private var exportNotice = ""
 
+    private var availableLanguages: [String] {
+        Set(store.words.map(\.sourceLanguage)).filter { !$0.isEmpty }.sorted()
+    }
+
     private var filtered: [Word] {
-        guard !searchText.isEmpty else { return store.words }
-        return store.words.filter {
-            $0.phrase.localizedCaseInsensitiveContains(searchText)
-                || $0.context.localizedCaseInsensitiveContains(searchText)
+        store.words.filter { word in
+            if selectedLanguageFilter != "all" && word.sourceLanguage != selectedLanguageFilter {
+                return false
+            }
+            guard !searchText.isEmpty else { return true }
+            return word.phrase.localizedCaseInsensitiveContains(searchText)
+                || word.translation.localizedCaseInsensitiveContains(searchText)
+                || word.context.localizedCaseInsensitiveContains(searchText)
+                || word.note.localizedCaseInsensitiveContains(searchText)
+                || word.tags.contains(where: { $0.localizedCaseInsensitiveContains(searchText) })
         }
     }
 
     private var selectedWord: Word? {
-        guard let selectedWordID else { return nil }
-        return filtered.first { $0.id == selectedWordID }
+        guard let selectedWordID else { return filtered.first }
+        return filtered.first { $0.id == selectedWordID } ?? filtered.first
     }
 
     var body: some View {
         HSplitView {
-            // 左侧列表
+            // 左侧词条卡片列表
             VStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    TextField("搜索", text: $searchText)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 240)
-                    Spacer()
-                    Text("\(store.words.count) 个词")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Button {
-                        exportCSV()
-                    } label: {
-                        Label("导出 CSV", systemImage: "square.and.arrow.up")
+                VStack(spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                        TextField("搜索词条、译文、备注或标签…", text: $searchText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12.5))
+                        if !searchText.isEmpty {
+                            Button { searchText = "" } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .disabled(store.words.isEmpty)
-                    .hoverFeedback("把全部生词导出为 CSV 文件")
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(STTheme.panelSurface))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(STTheme.hairlineBorder, lineWidth: 0.6))
+
+                    HStack(spacing: 6) {
+                        if availableLanguages.count > 1 {
+                            Picker("", selection: $selectedLanguageFilter) {
+                                Text("全部语种").tag("all")
+                                ForEach(availableLanguages, id: \.self) { code in
+                                    Text(languageName(code)).tag(code)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 96)
+                        }
+
+                        Text("共 \(filtered.count) 条")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Menu {
+                            Button("导出 CSV（Excel）") { exportCSV() }
+                            Button("导出 Anki TSV（制卡）") { exportAnkiTSV() }
+                            Button("导出 JSON 备份") { exportJSON() }
+                            Divider()
+                            Button("从 JSON 导入合并…") { importJSON() }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "square.and.arrow.up")
+                                Text("导入/导出")
+                            }
+                            .font(.system(size: 11, weight: .medium))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(STTheme.subtleFill))
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .hoverFeedback("导出为 CSV / Anki TSV / JSON，或导入备份")
+                    }
                 }
                 .padding(12)
+                .background(STTheme.windowCanvas)
 
                 Divider()
 
-                Table(filtered, selection: $selectedWordID) {
-                    TableColumn("词") { word in
-                        Text(word.phrase)
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                    .width(min: 80, ideal: 120)
-
-                    TableColumn("上下文") { word in
-                        Text(word.context)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-
-                    TableColumn("时间") { word in
-                        Text(word.createdAt, style: .date)
-                            .font(.system(size: 12))
+                if filtered.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "text.book.closed")
+                            .font(.system(size: 30, weight: .light))
+                            .foregroundStyle(.tertiary)
+                        Text(store.words.isEmpty ? "还没有收藏生词" : "未找到匹配生词")
+                            .font(.system(size: 12.5))
                             .foregroundStyle(.secondary)
                     }
-                    .width(90)
-
-                    TableColumn("") { word in
-                        Button {
-                            store.delete(word)
-                        } label: {
-                            Image(systemName: "trash")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.borderless)
-                        .hoverFeedback("删除")
-                    }
-                    .width(36)
-                }
-                .tableStyle(.inset)
-            }
-            .frame(minWidth: 280)
-
-            // 右侧详情面板
-            VStack(alignment: .leading, spacing: 12) {
-                if let word = selectedWord {
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 12) {
-                            // 词条 + 朗读按钮
-                            HStack(alignment: .center) {
-                                Text(word.phrase)
-                                    .font(.system(size: 18, weight: .semibold))
-                                    .textSelection(.enabled)
-                                Spacer()
-                                Button {
-                                    let lang = Language(rawValue: word.sourceLanguage)
-                                    SpeechManager.shared.speak(word.phrase, language: lang)
-                                } label: {
-                                    Image(systemName: "speaker.wave.2")
-                                        .font(.system(size: 14))
-                                }
-                                .buttonStyle(.borderless)
-                                .hoverFeedback("朗读词条")
+                        LazyVStack(spacing: 6) {
+                            ForEach(filtered) { word in
+                                WordListCard(
+                                    word: word,
+                                    isSelected: selectedWord?.id == word.id,
+                                    onSelect: { selectedWordID = word.id },
+                                    onDelete: {
+                                        if selectedWordID == word.id { selectedWordID = nil }
+                                        store.delete(word)
+                                    }
+                                )
                             }
+                        }
+                        .padding(10)
+                    }
+                }
+            }
+            .frame(minWidth: 300, maxWidth: 380)
+            .background(STTheme.windowCanvas)
 
-                            Divider()
+            // 右侧词条详情画布
+            VStack(alignment: .leading, spacing: 0) {
+                if let word = selectedWord {
+                    // 顶部词条栏
+                    HStack(alignment: .center, spacing: 10) {
+                        Text(word.phrase)
+                            .font(.system(size: 20, weight: .bold))
+                            .textSelection(.enabled)
+                            .lineLimit(2)
+                        Spacer()
+                        ToolbarIconButton(systemImage: "speaker.wave.2", tooltip: "朗读词条") {
+                            SpeechManager.shared.speak(word.phrase, language: Language(rawValue: word.sourceLanguage))
+                        }
+                        ToolbarIconButton(systemImage: "doc.on.doc", tooltip: "复制词条") {
+                            NSPasteboard.writeString(word.phrase)
+                            showNotice("已复制词条")
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .background(STTheme.windowCanvas)
 
-                            // 上下文 + 朗读按钮
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text("上下文")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Button {
-                                        let lang = Language(rawValue: word.sourceLanguage)
-                                        SpeechManager.shared.speak(word.context, language: lang)
-                                    } label: {
-                                        Image(systemName: "speaker.wave.2")
+                    Divider()
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 14) {
+                            // 译文卡片
+                            STCard {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Label("释义 / 译文", systemImage: "character.bubble")
+                                            .font(.system(size: 11.5, weight: .semibold))
+                                            .foregroundStyle(Color.accentColor)
+                                        Spacer()
+                                        if isTranslating {
+                                            ProgressView().controlSize(.small)
+                                        } else {
+                                            Button {
+                                                performTranslation(word)
+                                            } label: {
+                                                Label(word.translation.isEmpty ? "立即翻译" : "重新翻译", systemImage: "sparkles")
+                                                    .font(.system(size: 11.5, weight: .medium))
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .foregroundStyle(Color.accentColor)
+                                        }
+                                        if !word.translation.isEmpty {
+                                            SpeechBarButton(systemImage: "speaker.wave.2", tooltip: "朗读译文") {
+                                                SpeechManager.shared.speak(word.translation, language: Language(rawValue: word.targetLanguage))
+                                            }
+                                        }
+                                    }
+                                    if word.translation.isEmpty {
+                                        Text("暂无保存的译文，点击右上角「立即翻译」获取并持久化存储")
                                             .font(.system(size: 12))
+                                            .foregroundStyle(.tertiary)
+                                    } else {
+                                        Text(word.translation)
+                                            .font(.system(size: 14))
+                                            .lineSpacing(4)
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
                                     }
-                                    .buttonStyle(.borderless)
-                                    .hoverFeedback("朗读上下文")
                                 }
-                                Text(word.context)
-                                    .font(.system(size: 13))
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
 
-                            // 翻译区域
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text("翻译")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    if isTranslating {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                    } else {
-                                        Button {
-                                            performTranslation(word)
-                                        } label: {
-                                            Image(systemName: "character.bubble")
-                                                .font(.system(size: 12))
+                            // 上下文原句卡片
+                            STCard {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Label("上下文原句", systemImage: "quote.opening")
+                                            .font(.system(size: 11.5, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        SpeechBarButton(systemImage: "speaker.wave.2", tooltip: "朗读上下文") {
+                                            SpeechManager.shared.speak(word.context, language: Language(rawValue: word.sourceLanguage))
                                         }
-                                        .buttonStyle(.borderless)
-                                        .hoverFeedback("翻译词条")
-                                    }
-                                    // 朗读翻译结果
-                                    if !translationResult.isEmpty {
-                                        Button {
-                                            let lang = Language(rawValue: word.targetLanguage)
-                                            SpeechManager.shared.speak(translationResult, language: lang)
-                                        } label: {
-                                            Image(systemName: "speaker.wave.2")
-                                                .font(.system(size: 12))
+                                        SpeechBarButton(systemImage: "doc.on.doc", tooltip: "复制上下文") {
+                                            NSPasteboard.writeString(word.context)
+                                            showNotice("已复制上下文")
                                         }
-                                        .buttonStyle(.borderless)
-                                        .hoverFeedback("朗读译文")
                                     }
-                                }
-                                if translationResult.isEmpty {
-                                    Text("点击翻译按钮翻译词条")
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.tertiary)
-                                } else {
-                                    Text(translationResult)
-                                        .font(.system(size: 13))
+                                    Text(word.context)
+                                        .font(.system(size: 13.5))
+                                        .lineSpacing(4)
                                         .textSelection(.enabled)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                             }
 
-                            Divider()
+                            // 备注与交互式标签卡片
+                            STCard {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Label("笔记与标签", systemImage: "tag")
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .foregroundStyle(.secondary)
 
-                            HStack(spacing: 16) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("源语言")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                    Text(languageName(word.sourceLanguage))
-                                        .font(.system(size: 12))
-                                }
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("目标语言")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                    Text(languageName(word.targetLanguage))
-                                        .font(.system(size: 12))
-                                }
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("收藏时间")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                    Text(word.createdAt, style: .date)
-                                        .font(.system(size: 12))
+                                    HStack(spacing: 8) {
+                                        TextField("添加记忆线索或例句备注…", text: $noteDraft)
+                                            .textFieldStyle(.roundedBorder)
+                                            .onSubmit { saveNote(for: word) }
+                                        Button("保存备注") { saveNote(for: word) }
+                                            .controlSize(.small)
+                                    }
+
+                                    // 已有标签胶囊
+                                    if !word.tags.isEmpty {
+                                        HStack(spacing: 6) {
+                                            ForEach(word.tags, id: \.self) { tag in
+                                                STTagChip(text: tag) {
+                                                    removeTag(tag, from: word)
+                                                }
+                                            }
+                                            Spacer()
+                                        }
+                                    }
+
+                                    HStack(spacing: 8) {
+                                        TextField("输入新标签后按回车添加（如：论文 / 工作）", text: $newTagInput)
+                                            .textFieldStyle(.roundedBorder)
+                                            .onSubmit { addTag(to: word) }
+                                        Button("添加标签") { addTag(to: word) }
+                                            .controlSize(.small)
+                                            .disabled(newTagInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                                    }
                                 }
                             }
 
-                            Divider()
-
-                            HStack {
-                                Button {
-                                    NSPasteboard.writeString(word.context)
-                                    exportNotice = "已复制上下文"
-                                } label: {
-                                    Label("复制上下文", systemImage: "doc.on.doc")
-                                }
-                                .buttonStyle(.borderless)
-                                .hoverFeedback("复制这条生词的上下文原文")
-
-                                Button {
+                            // 底部元信息与删除
+                            HStack(spacing: 14) {
+                                Text("\(languageName(word.sourceLanguage)) → \(languageName(word.targetLanguage))")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Capsule().fill(STTheme.subtleFill))
+                                Text("收藏于 \(word.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.tertiary)
+                                Spacer()
+                                Button(role: .destructive) {
                                     store.delete(word)
                                     selectedWordID = nil
-                                    translationResult = ""
-                                    exportNotice = "已删除「\(String(word.phrase.prefix(10)))」"
+                                    showNotice("已删除「\(String(word.phrase.prefix(10)))」")
                                 } label: {
-                                    Label("删除", systemImage: "trash")
+                                    Label("删除生词", systemImage: "trash")
+                                        .font(.system(size: 11.5))
                                         .foregroundStyle(.red)
                                 }
                                 .buttonStyle(.borderless)
-                                .hoverFeedback("从生词本删除这条生词")
                             }
+                            .padding(.top, 2)
                         }
-                        .padding(20)
+                        .padding(18)
                     }
                 } else {
                     VStack(spacing: 10) {
                         Image(systemName: "text.book.closed")
-                            .font(.system(size: 32))
-                            .foregroundStyle(.secondary)
-                        Text("在左侧选择一条记录查看详情")
+                            .font(.system(size: 34, weight: .light))
+                            .foregroundStyle(.tertiary)
+                        Text("在左侧选择一条生词查看详情、译文与标签")
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .frame(minWidth: 220)
+            .frame(minWidth: 380)
+            .background(STTheme.windowCanvas)
         }
-        .frame(minWidth: 700, minHeight: 420)
+        .frame(minWidth: 760, minHeight: 500)
         .overlay(alignment: .bottom) {
-            // 操作结果提示条：复制/删除/导出后短暂显示
             if !exportNotice.isEmpty {
                 Text(exportNotice)
                     .font(.system(size: 12, weight: .medium))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 7)
                     .background(.regularMaterial, in: Capsule())
-                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.25)))
-                    .shadow(radius: 3)
-                    .padding(.bottom, 14)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .overlay(Capsule().strokeBorder(STTheme.strongBorder, lineWidth: 0.6))
+                    .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
+                    .padding(.bottom, 16)
             }
         }
-        .animation(.easeOut(duration: 0.15), value: exportNotice)
-        .onChange(of: selectedWordID) { _, _ in
-            // 切换词条时清空翻译结果
-            translationResult = ""
+        .onChange(of: selectedWord?.id) { _, _ in
+            noteDraft = selectedWord?.note ?? ""
+            newTagInput = ""
         }
-        .onChange(of: exportNotice) { _, notice in
-            // 提示 2 秒后自动消失
-            guard !notice.isEmpty else { return }
-            Task {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                exportNotice = ""
-            }
+        .onAppear {
+            noteDraft = selectedWord?.note ?? ""
         }
+    }
+
+    private func saveNote(for word: Word) {
+        store.update(wordID: word.id, note: noteDraft)
+        showNotice("已保存备注")
+    }
+
+    private func addTag(to word: Word) {
+        let candidate = newTagInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else { return }
+        var tags = word.tags
+        if !tags.contains(candidate) {
+            tags.append(candidate)
+            store.update(wordID: word.id, tags: tags)
+        }
+        newTagInput = ""
+    }
+
+    private func removeTag(_ tag: String, from word: Word) {
+        let tags = word.tags.filter { $0 != tag }
+        store.update(wordID: word.id, tags: tags)
     }
 
     private func languageName(_ code: String) -> String {
-        Language(rawValue: code)?.displayName ?? code
+        if code == "auto" { return "自动" }
+        return Language(rawValue: code)?.displayName ?? code
     }
 
-    /// 翻译选中词条
     private func performTranslation(_ word: Word) {
+        let src = Language(rawValue: word.sourceLanguage)
+        let tgt = Language(rawValue: word.targetLanguage)
         Task {
             isTranslating = true
-            let result = await onTranslate(word.phrase)
-            translationResult = result
+            let result = await onTranslate(word.phrase, src, tgt)
+            if !result.isEmpty && !result.hasPrefix("翻译失败：") {
+                store.update(wordID: word.id, translation: result)
+                showNotice("已翻译并保存")
+            } else if !result.isEmpty {
+                showNotice(result)
+            }
             isTranslating = false
+        }
+    }
+
+    private func showNotice(_ text: String) {
+        exportNotice = text
+        Task {
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
+            if exportNotice == text { exportNotice = "" }
         }
     }
 
@@ -298,16 +386,121 @@ struct WordBookView: View {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.nameFieldStringValue = "SnapTranslator-生词本.csv"
-        panel.begin { [store] response in
+        panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            let csv = WordBookExporter.csv(for: store.words)
             do {
-                try Data(csv.utf8).write(to: url)
-                exportNotice = "已导出 \(store.words.count) 条生词到 \(url.lastPathComponent)"
-            } catch {
-                let alert = NSAlert(error: error)
-                alert.runModal()
-            }
+                try Data(WordBookExporter.csv(for: store.words).utf8).write(to: url, options: .atomic)
+                showNotice("已导出 \(store.words.count) 条生词（CSV）")
+            } catch { NSAlert(error: error).runModal() }
         }
+    }
+
+    private func exportAnkiTSV() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.tabSeparatedText, .plainText]
+        panel.nameFieldStringValue = "SnapTranslator-Anki.tsv"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try Data(WordBookExporter.ankiTSV(for: store.words).utf8).write(to: url, options: .atomic)
+                showNotice("已导出 \(store.words.count) 条 Anki 卡片")
+            } catch { NSAlert(error: error).runModal() }
+        }
+    }
+
+    private func exportJSON() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "SnapTranslator-生词本备份.json"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                let data = try WordBookExporter.jsonData(for: store.words)
+                try data.write(to: url, options: .atomic)
+                showNotice("已备份 \(store.words.count) 条生词（JSON）")
+            } catch { NSAlert(error: error).runModal() }
+        }
+    }
+
+    private func importJSON() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                let data = try Data(contentsOf: url)
+                let count = try store.importJSON(data)
+                showNotice("导入完成，新增 \(count) 条生词")
+            } catch { NSAlert(error: error).runModal() }
+        }
+    }
+}
+
+private struct WordListCard: View {
+    let word: Word
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onDelete: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 3.5) {
+                    Text(word.phrase)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    if !word.translation.isEmpty {
+                        Text(word.translation)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else if !word.context.isEmpty && word.context != word.phrase {
+                        Text(word.context)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+
+                    HStack(spacing: 5) {
+                        Text(word.createdAt, style: .date)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                        ForEach(word.tags.prefix(2), id: \.self) { tag in
+                            Text(tag)
+                                .font(.system(size: 9.5, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.accentColor.opacity(0.11)))
+                        }
+                    }
+                }
+                Spacer(minLength: 4)
+                if hovered {
+                    Button(action: onDelete) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .hoverFeedback("删除生词")
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.12) : (hovered ? STTheme.cardHoverSurface : STTheme.cardSurface))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.45) : STTheme.hairlineBorder, lineWidth: isSelected ? 1 : 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
     }
 }

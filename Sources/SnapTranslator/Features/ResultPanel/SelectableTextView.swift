@@ -1,16 +1,16 @@
 import AppKit
+import SnapTranslatorCore
 import SwiftUI
 
-/// 可选中文本视图：右键菜单一键收藏，选区变化回调
+/// 可选中文本视图：舒适阅读排版（14pt + 宽松行距）、暗色模式适配、右键收藏与 AI 速释
 struct SelectableTextView: NSViewRepresentable {
     let text: String
+    var fontSize: CGFloat = 14
     var onSelectionChange: ((String) -> Void)?
     var onCollect: ((String, String) -> Void)?
-    /// 段落间距（段落之间的额外间距），用于呈现更清晰的分段效果
-    var paragraphSpacing: CGFloat = 0
-    /// 行间距倍数，默认 0（由系统决定）
-    var lineSpacing: CGFloat = 0
-    /// 是否压缩多余空行（默认开启，将连续多个换行折叠为单个换行）
+    var onQuickExplain: ((String, String) -> Void)?
+    var paragraphSpacing: CGFloat = 8
+    var lineSpacing: CGFloat = 4.5
     var collapseBlankLines: Bool = true
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -18,10 +18,11 @@ struct SelectableTextView: NSViewRepresentable {
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 12, height: 12)
+        textView.textContainerInset = NSSize(width: 14, height: 14)
         applyStyleAndText(to: textView)
         textView.onSelectionChange = onSelectionChange
         textView.onCollect = onCollect
+        textView.onQuickExplain = onQuickExplain
 
         let scrollView = TextPaneScrollView()
         scrollView.documentView = textView
@@ -33,29 +34,37 @@ struct SelectableTextView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? CollectableTextView else { return }
-        if textView.string != displayText {
+        let currentSize = (textView.typingAttributes[.font] as? NSFont)?.pointSize ?? 0
+        let fontChanged = abs(currentSize - fontSize) > 0.1
+        if textView.string != displayText || fontChanged {
+            let savedRanges = textView.selectedRanges
             applyStyleAndText(to: textView)
+            if fontChanged && textView.string == displayText {
+                let maxLen = (textView.string as NSString).length
+                let valid = savedRanges.compactMap { val -> NSValue? in
+                    let r = val.rangeValue
+                    guard r.location <= maxLen else { return nil }
+                    return NSValue(range: NSRange(location: r.location, length: min(r.length, maxLen - r.location)))
+                }
+                if !valid.isEmpty { textView.selectedRanges = valid }
+            }
         }
         textView.onSelectionChange = onSelectionChange
         textView.onCollect = onCollect
+        textView.onQuickExplain = onQuickExplain
     }
 
-    /// 展示文本：按需折叠多余空行，避免 AI 返回的空行导致视觉间距过大
     private var displayText: String {
         guard collapseBlankLines else { return text }
-        // 将 2 个以上连续换行折叠为单个换行
-        return text.replacingOccurrences(
-            of: "\\n{2,}",
-            with: "\n",
-            options: .regularExpression
-        )
+        return text.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
     }
 
-    /// 应用字体、段落间距并设置文本（使用 attributed string 确保样式生效）
     private func applyStyleAndText(to textView: CollectableTextView) {
-        let font = NSFont.systemFont(ofSize: 13)
-        var attrs: [NSAttributedString.Key: Any] = [.font: font]
-
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
+        var attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+        ]
         if paragraphSpacing > 0 || lineSpacing > 0 {
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.paragraphSpacing = paragraphSpacing
@@ -64,10 +73,8 @@ struct SelectableTextView: NSViewRepresentable {
             }
             attrs[.paragraphStyle] = paragraphStyle
         }
-
         let attributed = NSAttributedString(string: displayText, attributes: attrs)
         textView.textStorage?.setAttributedString(attributed)
-        // 同步 typingAttributes，确保后续编辑/选区也使用相同的样式
         textView.typingAttributes = attrs
     }
 }
@@ -75,6 +82,7 @@ struct SelectableTextView: NSViewRepresentable {
 final class CollectableTextView: NSTextView {
     var onSelectionChange: ((String) -> Void)?
     var onCollect: ((String, String) -> Void)?
+    var onQuickExplain: ((String, String) -> Void)?
 
     private var selectedText: String {
         guard selectedRange.length > 0, selectedRange.location != NSNotFound else { return "" }
@@ -98,14 +106,25 @@ final class CollectableTextView: NSTextView {
         let selection = selectedText
         if !selection.isEmpty {
             let preview = selection.count > 12 ? String(selection.prefix(12)) + "…" : selection
-            let collectItem = NSMenuItem(
-                title: "收藏「\(preview)」到生词本",
-                action: #selector(collectSelection(_:)),
-                keyEquivalent: ""
-            )
-            collectItem.target = self
             menu.insertItem(.separator(), at: 0)
-            menu.insertItem(collectItem, at: 0)
+            if onQuickExplain != nil {
+                let explainItem = NSMenuItem(
+                    title: "AI 速释「\(preview)」",
+                    action: #selector(quickExplainSelection(_:)),
+                    keyEquivalent: ""
+                )
+                explainItem.target = self
+                menu.insertItem(explainItem, at: 0)
+            }
+            if onCollect != nil {
+                let collectItem = NSMenuItem(
+                    title: "收藏「\(preview)」到生词本",
+                    action: #selector(collectSelection(_:)),
+                    keyEquivalent: ""
+                )
+                collectItem.target = self
+                menu.insertItem(collectItem, at: 0)
+            }
         }
         return menu
     }
@@ -114,5 +133,11 @@ final class CollectableTextView: NSTextView {
         let selection = selectedText
         guard !selection.isEmpty else { return }
         onCollect?(selection, string)
+    }
+
+    @objc private func quickExplainSelection(_ sender: Any?) {
+        let selection = selectedText
+        guard !selection.isEmpty else { return }
+        onQuickExplain?(selection, string)
     }
 }

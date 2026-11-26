@@ -1,18 +1,18 @@
 import AppKit
+import SnapTranslatorCore
 import SwiftUI
 
-/// 可编辑文本视图：用于翻译页签左侧识别区，支持编辑并实时触发翻译
-/// 文字变化时通过 onChange 回调（供 AppDelegate 实时翻译）
-/// 同时通过 onSelectionChange 回调跟踪左侧选中文本（供左侧朗读优先朗读选中内容）
+/// 可编辑文本视图：舒适阅读排版（14pt + 宽裕留白）、暗色模式适配、剪贴板粘贴图片拦截、右键收藏与 AI 速释
 struct EditableTextView: NSViewRepresentable {
     @Binding var text: String
-    var paragraphSpacing: CGFloat = 4
-    var lineSpacing: CGFloat = 2
-    /// 文字变化回调（编辑后触发，用于实时翻译）
+    var fontSize: CGFloat = 14
+    var paragraphSpacing: CGFloat = 8
+    var lineSpacing: CGFloat = 4.5
     var onChange: ((String) -> Void)?
-    /// 选中文本变化回调（用于左侧朗读时优先朗读选中内容）
     var onSelectionChange: ((String) -> Void)?
-    /// 视图出现后是否自动聚焦（首次展示翻译页签时直接可输入）
+    var onCollect: ((String, String) -> Void)?
+    var onQuickExplain: ((String, String) -> Void)?
+    var onPasteImage: ((NSImage) -> Void)?
     var focusOnAppear: Bool = false
 
     func makeCoordinator() -> Coordinator {
@@ -20,15 +20,20 @@ struct EditableTextView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let textView = NSTextView()
+        let textView = PasteAwareTextView()
         textView.isEditable = true
         textView.isSelectable = true
         textView.isRichText = false
         textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 12, height: 12)
+        textView.insertionPointColor = .controlAccentColor
+        textView.textContainerInset = NSSize(width: 14, height: 14)
         textView.delegate = context.coordinator
+        textView.onPasteImage = onPasteImage
+        textView.onCollect = onCollect
+        textView.onQuickExplain = onQuickExplain
         applyStyleAndText(to: textView)
         context.coordinator.textView = textView
+        context.coordinator.lastFontSize = fontSize
 
         let scrollView = TextPaneScrollView()
         scrollView.documentView = textView
@@ -39,27 +44,37 @@ struct EditableTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
+        guard let textView = scrollView.documentView as? PasteAwareTextView else { return }
         let coordinator = context.coordinator
-        // 出现后接管焦点：仅当焦点确实设置成功才消耗标记。
-        // 若首次 updateNSView 时视图尚未挂进窗口（window == nil）静默失败，
-        // 保留标记可借后续 SwiftUI 更新重试，否则面板永远失去自动聚焦。
+        textView.onPasteImage = onPasteImage
+        textView.onCollect = onCollect
+        textView.onQuickExplain = onQuickExplain
+
         if focusOnAppear && !coordinator.didFocusOnAppear {
             coordinator.didFocusOnAppear = coordinator.focus()
         }
-        // 仅当外部传入的文本与当前编辑内容不同，且不在输入法拼音合成（marked text）期间才同步，
-        // 避免 setAttributedString 重置 textStorage 打断中文等输入法的候选字。
-        if !textView.hasMarkedText() && textView.string != text {
+        let fontChanged = abs(coordinator.lastFontSize - fontSize) > 0.1
+        if !textView.hasMarkedText() && (textView.string != text || fontChanged) {
+            let savedRanges = textView.selectedRanges
             coordinator.isProgrammatic = true
             applyStyleAndText(to: textView)
+            if !fontChanged || textView.string == text {
+                let maxLen = (textView.string as NSString).length
+                let valid = savedRanges.compactMap { val -> NSValue? in
+                    let r = val.rangeValue
+                    guard r.location <= maxLen else { return nil }
+                    return NSValue(range: NSRange(location: r.location, length: min(r.length, maxLen - r.location)))
+                }
+                if !valid.isEmpty { textView.selectedRanges = valid }
+            }
+            coordinator.lastFontSize = fontSize
             coordinator.isProgrammatic = false
         }
         coordinator.parent = self
     }
 
-    /// 应用字体、段落间距并设置文本
     private func applyStyleAndText(to textView: NSTextView) {
-        let font = NSFont.systemFont(ofSize: 13)
+        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.paragraphSpacing = paragraphSpacing
         if lineSpacing > 0 {
@@ -67,30 +82,24 @@ struct EditableTextView: NSViewRepresentable {
         }
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
+            .foregroundColor: NSColor.labelColor,
             .paragraphStyle: paragraphStyle,
         ]
         textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: attrs))
-        // 同步 typingAttributes，确保后续输入沿用样式
         textView.typingAttributes = attrs
     }
 
-    // MARK: - Coordinator
-
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: EditableTextView
-        /// 标记当前是否为程序化同步文本，避免 setAttributedString 触发递归 onChange 干扰实时翻译
         var isProgrammatic = false
-        /// 弱引用编辑框，用于自动聚焦
         weak var textView: NSTextView?
-        /// 是否已执行过出现时的自动聚焦
         var didFocusOnAppear = false
+        var lastFontSize: CGFloat = 14
 
         init(_ parent: EditableTextView) {
             self.parent = parent
         }
 
-        /// 把窗口首响应者切到编辑框（激活应用以确保键盘事件可达）
-        /// - Returns: 焦点是否真正设置成功（供调用方决定是否保留重试标记）
         @discardableResult
         func focus() -> Bool {
             guard let textView, let window = textView.window else { return false }
@@ -119,5 +128,67 @@ struct EditableTextView: NSViewRepresentable {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             parent.onSelectionChange?(selected)
         }
+    }
+}
+
+final class PasteAwareTextView: NSTextView {
+    var onPasteImage: ((NSImage) -> Void)?
+    var onCollect: ((String, String) -> Void)?
+    var onQuickExplain: ((String, String) -> Void)?
+
+    private var selectedText: String {
+        guard selectedRange.length > 0, selectedRange.location != NSNotFound else { return "" }
+        return (string as NSString).substring(with: selectedRange)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    override func paste(_ sender: Any?) {
+        let pb = NSPasteboard.general
+        let hasPlainText = !(pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        if !hasPlainText, let image = NSPasteboard.readImage(), let onPasteImage {
+            onPasteImage(image)
+            return
+        }
+        super.paste(sender)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let menu = super.menu(for: event) else { return nil }
+        let selection = selectedText
+        if !selection.isEmpty {
+            let preview = selection.count > 12 ? String(selection.prefix(12)) + "…" : selection
+            menu.insertItem(.separator(), at: 0)
+            if onQuickExplain != nil {
+                let explainItem = NSMenuItem(
+                    title: "AI 速释「\(preview)」",
+                    action: #selector(handleQuickExplain(_:)),
+                    keyEquivalent: ""
+                )
+                explainItem.target = self
+                menu.insertItem(explainItem, at: 0)
+            }
+            if onCollect != nil {
+                let collectItem = NSMenuItem(
+                    title: "收藏「\(preview)」到生词本",
+                    action: #selector(handleCollect(_:)),
+                    keyEquivalent: ""
+                )
+                collectItem.target = self
+                menu.insertItem(collectItem, at: 0)
+            }
+        }
+        return menu
+    }
+
+    @objc private func handleCollect(_ sender: Any?) {
+        let selection = selectedText
+        guard !selection.isEmpty else { return }
+        onCollect?(selection, string)
+    }
+
+    @objc private func handleQuickExplain(_ sender: Any?) {
+        let selection = selectedText
+        guard !selection.isEmpty else { return }
+        onQuickExplain?(selection, string)
     }
 }
